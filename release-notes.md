@@ -1,3 +1,3 @@
-# Release 1.0.7
+# Release 1.0.8
 
-- Switch OpenCV init to initLocal and improve camera permission handling
+- Improve document detection and add auto-detect button

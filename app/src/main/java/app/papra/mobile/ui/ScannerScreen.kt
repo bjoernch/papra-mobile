@@ -2,10 +2,13 @@ package app.papra.mobile.ui
 
 import android.graphics.Bitmap
 import android.graphics.PointF
+import android.graphics.Matrix
 import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -44,7 +47,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.compose.runtime.DisposableEffect
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 @Composable
 fun ScannerScreen(
@@ -58,6 +64,9 @@ fun ScannerScreen(
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var corners by remember { mutableStateOf<List<PointF>>(emptyList()) }
     var autoDetecting by remember { mutableStateOf(false) }
+    var isDragging by remember { mutableStateOf(false) }
+    val analyzerExecutor = remember { Executors.newSingleThreadExecutor() }
+    val lastAnalyzeAt = remember { AtomicLong(0L) }
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -87,31 +96,69 @@ fun ScannerScreen(
                 Text("Requesting camera permission…")
             }
         } else if (previewBitmap == null) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    val previewView = PreviewView(ctx).apply {
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    }
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build().also {
-                            it.setSurfaceProvider(previewView.surfaceProvider)
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        val previewView = PreviewView(ctx).apply {
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                         }
-                        val capture = ImageCapture.Builder()
-                            .setTargetResolution(Size(1600, 1600))
-                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                            .build()
-                        imageCapture = capture
-                        val selector = CameraSelector.DEFAULT_BACK_CAMERA
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
-                    }, ContextCompat.getMainExecutor(ctx))
-                    previewView
+                        val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                        cameraProviderFuture.addListener({
+                            val cameraProvider = cameraProviderFuture.get()
+                            val preview = Preview.Builder().build().also {
+                                it.setSurfaceProvider(previewView.surfaceProvider)
+                            }
+                            val capture = ImageCapture.Builder()
+                                .setTargetResolution(Size(1600, 1600))
+                                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                                .build()
+                            val analysis = ImageAnalysis.Builder()
+                                .setTargetResolution(Size(640, 640))
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                                .build()
+                            analysis.setAnalyzer(analyzerExecutor) { image ->
+                                val now = System.currentTimeMillis()
+                                if (now - lastAnalyzeAt.get() < 350 || isDragging) {
+                                    image.close()
+                                    return@setAnalyzer
+                                }
+                                lastAnalyzeAt.set(now)
+                                val bitmap = imageProxyToBitmap(image)
+                                if (bitmap != null) {
+                                    val detected = detectDocumentCorners(bitmap)
+                                    bitmap.recycle()
+                                    ContextCompat.getMainExecutor(ctx).execute {
+                                        if (!isDragging && previewBitmap == null) {
+                                            corners = detected
+                                        }
+                                    }
+                                }
+                                image.close()
+                            }
+                            imageCapture = capture
+                            val selector = CameraSelector.DEFAULT_BACK_CAMERA
+                            cameraProvider.unbindAll()
+                            cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, capture, analysis)
+                        }, ContextCompat.getMainExecutor(ctx))
+                        previewView
+                    }
+                )
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    if (corners.size == 4) {
+                        val points = corners.map { Offset(it.x * size.width, it.y * size.height) }
+                        drawLine(Color.Green, points[0], points[1], 4f)
+                        drawLine(Color.Green, points[1], points[2], 4f)
+                        drawLine(Color.Green, points[2], points[3], 4f)
+                        drawLine(Color.Green, points[3], points[0], 4f)
+                        points.forEach { p ->
+                            drawCircle(Color.White, radius = 10f, center = p)
+                        }
+                    }
                 }
-            )
+            }
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -172,7 +219,11 @@ fun ScannerScreen(
                         .padding(12.dp)
                         .background(Color.Black)
                         .pointerInput(Unit) {
-                            detectDragGestures { change, _ ->
+                            detectDragGestures(
+                                onDragStart = { isDragging = true },
+                                onDragEnd = { isDragging = false },
+                                onDragCancel = { isDragging = false }
+                            ) { change, _ ->
                                 val pos = change.position
                                 val w = displayWidth.value
                                 val h = displayHeight.value
@@ -244,8 +295,35 @@ fun ScannerScreen(
             }
         }
     }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            analyzerExecutor.shutdown()
+        }
+    }
 }
 
 private fun loadBitmap(file: File): Bitmap? {
     return android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+}
+
+private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
+    val buffer = image.planes.firstOrNull()?.buffer ?: return null
+    val width = image.width
+    val height = image.height
+    val bytes = ByteArray(buffer.remaining())
+    buffer.get(bytes)
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(bytes))
+    return rotateBitmap(bitmap, image.imageInfo.rotationDegrees)
+}
+
+private fun rotateBitmap(bitmap: Bitmap, rotation: Int): Bitmap {
+    if (rotation == 0) return bitmap
+    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+    val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    if (rotated != bitmap) {
+        bitmap.recycle()
+    }
+    return rotated
 }
