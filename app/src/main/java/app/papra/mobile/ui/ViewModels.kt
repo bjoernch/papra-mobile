@@ -437,6 +437,46 @@ class DocumentsViewModel(
         }
     }
 
+    fun uploadScannedPdfFromBitmap(
+        bitmap: Bitmap,
+        context: Context,
+        quality: ScanQuality
+    ) {
+        viewModelScope.launch {
+            uploadInProgress = true
+            uploadProgress = 0f
+            errorMessage = null
+            try {
+                val pdfFile = createPdfFromBitmap(bitmap, context.cacheDir, quality)
+                uploadFileName = pdfFile.name
+                val contentLength = pdfFile.length()
+                pdfFile.inputStream().use { input ->
+                    apiClient.uploadDocument(
+                        apiKey,
+                        organizationId,
+                        pdfFile.name,
+                        "application/pdf",
+                        input,
+                        contentLength
+                    ) { sent, total ->
+                        uploadProgress = if (total != null && total > 0) {
+                            sent.toFloat() / total.toFloat()
+                        } else {
+                            null
+                        }
+                    }
+                }
+                loadDocuments()
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Scan upload failed"
+            } finally {
+                uploadInProgress = false
+                uploadFileName = null
+                uploadProgress = null
+            }
+        }
+    }
+
     fun downloadDocumentToUri(
         document: Document,
         uri: Uri,
@@ -552,6 +592,73 @@ private fun createPdfFromImages(
     }
     pdfDocument.close()
     return file
+}
+
+private fun createPdfFromBitmap(
+    bitmap: Bitmap,
+    cacheDir: File,
+    quality: ScanQuality
+): File {
+    val maxDimension = when (quality) {
+        ScanQuality.LOW -> 1000
+        ScanQuality.MEDIUM -> 1600
+        ScanQuality.HIGH -> 2400
+    }
+    val scaled = scaleBitmap(bitmap, maxDimension)
+    val processed = if (quality == ScanQuality.HIGH) {
+        scaled
+    } else {
+        OpenCVLoader.initDebug()
+        applyThreshold(scaled)
+    }
+    val pdfDocument = PdfDocument()
+    val pageInfo = PdfDocument.PageInfo.Builder(processed.width, processed.height, 1).create()
+    val page = pdfDocument.startPage(pageInfo)
+    page.canvas.drawBitmap(processed, 0f, 0f, null)
+    pdfDocument.finishPage(page)
+
+    val file = File(cacheDir, "scan-${System.currentTimeMillis()}.pdf")
+    file.outputStream().use { output ->
+        pdfDocument.writeTo(output)
+    }
+    pdfDocument.close()
+    if (processed !== scaled) processed.recycle()
+    if (scaled !== bitmap) scaled.recycle()
+    return file
+}
+
+private fun scaleBitmap(bitmap: Bitmap, maxDimension: Int): Bitmap {
+    val width = bitmap.width
+    val height = bitmap.height
+    val largest = maxOf(width, height)
+    if (largest <= maxDimension) return bitmap
+    val scale = maxDimension.toFloat() / largest.toFloat()
+    val targetW = (width * scale).toInt().coerceAtLeast(1)
+    val targetH = (height * scale).toInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+}
+
+private fun applyThreshold(bitmap: Bitmap): Bitmap {
+    val src = Mat()
+    Utils.bitmapToMat(bitmap, src)
+    val gray = Mat()
+    Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY)
+    val thresh = Mat()
+    Imgproc.adaptiveThreshold(
+        gray,
+        thresh,
+        255.0,
+        Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
+        Imgproc.THRESH_BINARY,
+        11,
+        2.0
+    )
+    val result = Bitmap.createBitmap(thresh.cols(), thresh.rows(), Bitmap.Config.ARGB_8888)
+    Utils.matToBitmap(thresh, result)
+    src.release()
+    gray.release()
+    thresh.release()
+    return result
 }
 
 private fun decodeScaledBitmap(

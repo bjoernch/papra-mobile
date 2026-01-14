@@ -2,7 +2,6 @@ package app.papra.mobile.ui
 
 import android.content.Intent
 import android.net.Uri
-import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -109,7 +108,7 @@ fun DocumentsScreen(
     var deleteTarget by remember { mutableStateOf<Document?>(null) }
     var showScanQualityDialog by remember { mutableStateOf(false) }
     var pendingScanQuality by remember { mutableStateOf<ScanQuality?>(null) }
-    var pendingScanUri by remember { mutableStateOf<Uri?>(null) }
+    var showScanner by remember { mutableStateOf(false) }
 
     val uploadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -135,38 +134,10 @@ fun DocumentsScreen(
         pendingDownload = null
     }
 
-    val scanLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success) {
-            val uri = pendingScanUri
-            val quality = pendingScanQuality
-            if (uri != null && quality != null) {
-                viewModel.uploadScannedPdfFromImages(
-                    listOf(uri),
-                    context.contentResolver,
-                    context,
-                    quality
-                )
-            } else {
-                scanError = "Scan failed."
-            }
-        }
-        pendingScanUri = null
-        pendingScanQuality = null
-    }
-
     val startScan: (ScanQuality) -> Unit = { quality ->
         scanError = null
         pendingScanQuality = quality
-        val file = File(context.cacheDir, "scan-${System.currentTimeMillis()}.jpg")
-        val uri = androidx.core.content.FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
-        pendingScanUri = uri
-        scanLauncher.launch(uri)
+        showScanner = true
     }
 
     LaunchedEffect(Unit) {
@@ -903,6 +874,32 @@ fun DocumentsScreen(
                 }
             }
         )
+    }
+
+    if (showScanner) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showScanner = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            ScannerScreen(
+                onCancel = {
+                    showScanner = false
+                    pendingScanQuality = null
+                },
+                onConfirm = { bitmap, corners ->
+                    val quality = pendingScanQuality ?: ScanQuality.MEDIUM
+                    val warped = warpBitmapWithCorners(bitmap, corners)
+                    viewModel.uploadScannedPdfFromBitmap(warped, context, quality)
+                    showScanner = false
+                    pendingScanQuality = null
+                },
+                onError = { message ->
+                    scanError = message
+                    showScanner = false
+                    pendingScanQuality = null
+                }
+            )
+        }
     }
 
     if (showDeleteDialog) {
