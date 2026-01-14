@@ -21,7 +21,6 @@ An unofficial Android client for Papra. This app is **not affiliated with Papra*
 You can install the latest APK from the GitHub Releases page.
 
 - Releases: https://github.com/bjoernch/papra-mobile/releases
-- Obtainium configurator: https://obtainium.dev/ (use the releases URL above)
 
 ## Development
 
