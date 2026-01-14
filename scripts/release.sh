@@ -94,7 +94,50 @@ else
 fi
 
 echo "Building release APK..."
-./gradlew assembleRelease
+gradle_cmd=(./gradlew assembleRelease)
+
+read -r -p "Sign APK? (y/N): " sign_choice
+if [[ "$sign_choice" == "y" || "$sign_choice" == "Y" ]]; then
+  default_keystore="keystore/release.keystore"
+  read -r -p "Keystore path (default ${default_keystore}): " keystore_path
+  if [[ -z "$keystore_path" ]]; then
+    keystore_path="$default_keystore"
+  fi
+  read -r -p "Key alias (default papra): " key_alias
+  if [[ -z "$key_alias" ]]; then
+    key_alias="papra"
+  fi
+  read -r -s -p "Keystore password: " store_pass
+  echo
+  read -r -s -p "Key password (leave blank to reuse keystore password): " key_pass
+  echo
+  if [[ -z "$key_pass" ]]; then
+    key_pass="$store_pass"
+  fi
+
+  mkdir -p "$(dirname "$keystore_path")"
+  if [[ ! -f "$keystore_path" ]]; then
+    echo "Creating keystore at $keystore_path..."
+    keytool -genkeypair -v \
+      -keystore "$keystore_path" \
+      -alias "$key_alias" \
+      -keyalg RSA \
+      -keysize 2048 \
+      -validity 10000 \
+      -storepass "$store_pass" \
+      -keypass "$key_pass" \
+      -dname "CN=Papra, OU=Papra, O=Papra, L=, S=, C=US"
+  fi
+
+  gradle_cmd+=(
+    -PRELEASE_STORE_FILE="$keystore_path"
+    -PRELEASE_STORE_PASSWORD="$store_pass"
+    -PRELEASE_KEY_ALIAS="$key_alias"
+    -PRELEASE_KEY_PASSWORD="$key_pass"
+  )
+fi
+
+"${gradle_cmd[@]}"
 
 apk_path=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
 if [[ -z "$apk_path" || ! -f "$apk_path" ]]; then

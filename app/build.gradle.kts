@@ -20,6 +20,37 @@ android {
         compose = true
     }
 
+    val releaseStoreFile = project.findProperty("RELEASE_STORE_FILE") as String?
+    val releaseStorePassword = project.findProperty("RELEASE_STORE_PASSWORD") as String?
+    val releaseKeyAlias = project.findProperty("RELEASE_KEY_ALIAS") as String?
+    val releaseKeyPassword = project.findProperty("RELEASE_KEY_PASSWORD") as String?
+    val hasReleaseSigning = listOf(
+        releaseStoreFile,
+        releaseStorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword
+    ).all { !it.isNullOrBlank() }
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
