@@ -17,8 +17,15 @@ fun detectDocumentCorners(bitmap: Bitmap): List<PointF> {
     OpenCVLoader.initLocal()
     val src = Mat()
     Utils.bitmapToMat(bitmap, src)
+    val scale = computeScaleFactor(bitmap.width, bitmap.height, 1000)
+    val resized = Mat()
+    if (scale < 1.0) {
+        Imgproc.resize(src, resized, Size(0.0, 0.0), scale, scale, Imgproc.INTER_AREA)
+    } else {
+        src.copyTo(resized)
+    }
     val gray = Mat()
-    Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY)
+    Imgproc.cvtColor(resized, gray, Imgproc.COLOR_BGR2GRAY)
     Imgproc.GaussianBlur(gray, gray, Size(5.0, 5.0), 0.0)
     val edged = Mat()
     Imgproc.Canny(gray, edged, 75.0, 200.0)
@@ -40,23 +47,24 @@ fun detectDocumentCorners(bitmap: Bitmap): List<PointF> {
     }
 
     val corners = if (docContour == null) {
+        val margin = 0.06f
         listOf(
-            PointF(0f, 0f),
-            PointF(1f, 0f),
-            PointF(1f, 1f),
-            PointF(0f, 1f)
+            PointF(margin, margin),
+            PointF(1f - margin, margin),
+            PointF(1f - margin, 1f - margin),
+            PointF(margin, 1f - margin)
         )
     } else {
         val ordered = orderPoints(docContour.toArray())
         ordered.map { point ->
-            PointF(
-                (point.x / bitmap.width).toFloat().coerceIn(0f, 1f),
-                (point.y / bitmap.height).toFloat().coerceIn(0f, 1f)
-            )
+            val x = (point.x / resized.width()).toFloat().coerceIn(0f, 1f)
+            val y = (point.y / resized.height()).toFloat().coerceIn(0f, 1f)
+            PointF(x, y)
         }
     }
 
     src.release()
+    resized.release()
     gray.release()
     edged.release()
     return corners
@@ -121,4 +129,9 @@ private fun orderPoints(points: Array<Point>): List<Point> {
 
 private fun distance(a: Point, b: Point): Double {
     return hypot(a.x - b.x, a.y - b.y)
+}
+
+private fun computeScaleFactor(width: Int, height: Int, maxDimension: Int): Double {
+    val largest = maxOf(width, height).toDouble()
+    return if (largest <= maxDimension) 1.0 else maxDimension / largest
 }

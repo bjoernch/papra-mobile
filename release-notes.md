@@ -1,6 +1,3 @@
-# Release 1.0.6
+# Release 1.0.7
 
-- Fix type conversion in warpBitmapWithCorners
-- Ignore release APK
-- Add OpenCV-based document scanner with CameraX
-- Add OpenCV-based document scanner with CameraX
+- Switch OpenCV init to initLocal and improve camera permission handling

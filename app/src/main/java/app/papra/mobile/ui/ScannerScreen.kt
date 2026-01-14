@@ -57,6 +57,7 @@ fun ScannerScreen(
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var corners by remember { mutableStateOf<List<PointF>>(emptyList()) }
+    var autoDetecting by remember { mutableStateOf(false) }
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -225,6 +226,16 @@ fun ScannerScreen(
                         corners = emptyList()
                     }) {
                         Text("Retake")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val bmp = previewBitmap ?: return@OutlinedButton
+                            autoDetecting = true
+                            corners = detectDocumentCorners(bmp)
+                            autoDetecting = false
+                        }
+                    ) {
+                        Text(if (autoDetecting) "Detecting…" else "Auto")
                     }
                     Button(onClick = { onConfirm(bitmap, corners) }) {
                         Text("Use scan")
