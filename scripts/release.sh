@@ -24,7 +24,7 @@ require_no_unpushed_commits() {
 }
 
 latest_tag() {
-  git describe --tags --abbrev=0 2>/dev/null || true
+  git tag --list "v*" --sort=-v:refname | head -n 1
 }
 
 next_version() {
@@ -63,8 +63,12 @@ read -r -p "Release tag (default v${default_version}): " tag
 if [[ -z "$tag" ]]; then
   tag="v${default_version}"
 fi
-if [[ "$tag" != v* ]]; then
-  tag="v${tag}"
+tag="${tag#v}"
+tag="v${tag}"
+tag="${tag// /}"
+if ! [[ "$tag" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+  echo "Tag must look like v1.2.3 (got: $tag)" >&2
+  exit 1
 fi
 if [[ -z "$tag" ]]; then
   echo "Tag cannot be empty." >&2
@@ -115,6 +119,9 @@ if [[ "$sign_choice" == "y" || "$sign_choice" == "Y" ]]; then
     key_pass="$store_pass"
   fi
 
+  if [[ "$keystore_path" != /* ]]; then
+    keystore_path="$(pwd)/$keystore_path"
+  fi
   mkdir -p "$(dirname "$keystore_path")"
   if [[ ! -f "$keystore_path" ]]; then
     echo "Creating keystore at $keystore_path..."
