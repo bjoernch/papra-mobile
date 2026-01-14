@@ -1,3 +1,3 @@
-# Release 1.0.4
+# Release 1.0.5
 
-- Add scan quality selection for document scanning
+- Replace ML Kit scanner with OpenCV for document scanning
