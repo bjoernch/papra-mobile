@@ -510,12 +510,16 @@ private fun createPdfFromImages(
 ): File {
     val pdfDocument = PdfDocument()
     val maxDimension = when (quality) {
-        ScanQuality.LOW -> 1200
-        ScanQuality.MEDIUM -> 2000
-        ScanQuality.HIGH -> 3000
+        ScanQuality.LOW -> 1000
+        ScanQuality.MEDIUM -> 1600
+        ScanQuality.HIGH -> 2400
+    }
+    val preferredConfig = when (quality) {
+        ScanQuality.HIGH -> Bitmap.Config.ARGB_8888
+        else -> Bitmap.Config.RGB_565
     }
     imageUris.forEachIndexed { index, uri ->
-        val bitmap = decodeScaledBitmap(contentResolver, uri, maxDimension)
+        val bitmap = decodeScaledBitmap(contentResolver, uri, maxDimension, preferredConfig)
             ?: throw IOException("Unable to read scan")
         val pageInfo = PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, index + 1).create()
         val page = pdfDocument.startPage(pageInfo)
@@ -535,7 +539,8 @@ private fun createPdfFromImages(
 private fun decodeScaledBitmap(
     contentResolver: ContentResolver,
     uri: Uri,
-    maxDimension: Int
+    maxDimension: Int,
+    preferredConfig: Bitmap.Config
 ): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     contentResolver.openInputStream(uri)?.use { input ->
@@ -551,6 +556,7 @@ private fun decodeScaledBitmap(
     }
     val options = BitmapFactory.Options().apply {
         inSampleSize = sampleSize
+        inPreferredConfig = preferredConfig
     }
     return contentResolver.openInputStream(uri)?.use { input ->
         BitmapFactory.decodeStream(input, null, options)
