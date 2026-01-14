@@ -11,6 +11,7 @@ import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.io.InputStream
@@ -123,15 +124,33 @@ class ApiClient(
         documentId: String,
         name: String
     ): Document = withContext(Dispatchers.IO) {
-        val body = MultipartBody.Builder()
+        val url = "$baseUrl/organizations/$organizationId/documents/$documentId"
+        val formBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("name", name)
             .build()
-        val request = requestBuilder(
-            "$baseUrl/organizations/$organizationId/documents/$documentId",
-            apiKey
-        ).patch(body).build()
-        val json = executeJson(request)
+        val formRequest = requestBuilder(url, apiKey)
+            .patch(formBody)
+            .build()
+        try {
+            val json = executeJson(formRequest)
+            return@withContext json.getJSONObject("document").toDocument()
+        } catch (e: IOException) {
+            val message = e.message.orEmpty()
+            if (!message.contains("invalid_request.body", ignoreCase = true)) {
+                throw e
+            }
+        }
+
+        val payload = JSONObject().put("name", name)
+        val jsonBody = RequestBody.create(
+            "application/json".toMediaTypeOrNull(),
+            payload.toString()
+        )
+        val jsonRequest = requestBuilder(url, apiKey)
+            .patch(jsonBody)
+            .build()
+        val json = executeJson(jsonRequest)
         json.getJSONObject("document").toDocument()
     }
 
@@ -180,7 +199,8 @@ class ApiClient(
         color: String,
         description: String?
     ): Tag = withContext(Dispatchers.IO) {
-        val body = MultipartBody.Builder()
+        val url = "$baseUrl/organizations/$organizationId/tags"
+        val formBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("name", name)
             .addFormDataPart("color", color)
@@ -190,10 +210,35 @@ class ApiClient(
                 }
             }
             .build()
-        val request = requestBuilder("$baseUrl/organizations/$organizationId/tags", apiKey)
-            .post(body)
+        val formRequest = requestBuilder(url, apiKey)
+            .post(formBody)
             .build()
-        val json = executeJson(request)
+        try {
+            val json = executeJson(formRequest)
+            return@withContext json.getJSONObject("tag").toTag()
+        } catch (e: IOException) {
+            val message = e.message.orEmpty()
+            if (!message.contains("invalid_request.body", ignoreCase = true)) {
+                throw e
+            }
+        }
+
+        val payload = JSONObject()
+            .put("name", name)
+            .put("color", color)
+            .apply {
+                if (!description.isNullOrBlank()) {
+                    put("description", description)
+                }
+            }
+        val jsonBody = RequestBody.create(
+            "application/json".toMediaTypeOrNull(),
+            payload.toString()
+        )
+        val jsonRequest = requestBuilder(url, apiKey)
+            .post(jsonBody)
+            .build()
+        val json = executeJson(jsonRequest)
         json.getJSONObject("tag").toTag()
     }
 
@@ -238,15 +283,34 @@ class ApiClient(
         documentId: String,
         tagId: String
     ) = withContext(Dispatchers.IO) {
-        val body = FormBody.Builder().add("tagId", tagId).build()
-        val request = requestBuilder(
-            "$baseUrl/organizations/$organizationId/documents/$documentId/tags",
-            apiKey
-        ).post(body).build()
-        okHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                val payload = response.body?.string().orEmpty()
+        val url = "$baseUrl/organizations/$organizationId/documents/$documentId/tags"
+        val formBody = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("tagId", tagId)
+            .build()
+        val formRequest = requestBuilder(url, apiKey)
+            .post(formBody)
+            .build()
+        okHttpClient.newCall(formRequest).execute().use { response ->
+            if (response.isSuccessful) return@withContext
+            val payload = response.body?.string().orEmpty()
+            if (!payload.contains("invalid_request.body", ignoreCase = true)) {
                 throw IOException("Tag add failed ${response.code}: $payload")
+            }
+        }
+
+        val payload = JSONObject().put("tagId", tagId)
+        val jsonBody = RequestBody.create(
+            "application/json".toMediaTypeOrNull(),
+            payload.toString()
+        )
+        val jsonRequest = requestBuilder(url, apiKey)
+            .post(jsonBody)
+            .build()
+        okHttpClient.newCall(jsonRequest).execute().use { response ->
+            if (!response.isSuccessful) {
+                val error = response.body?.string().orEmpty()
+                throw IOException("Tag add failed ${response.code}: $error")
             }
         }
     }
@@ -305,6 +369,31 @@ class ApiClient(
         }
     }
 
+    suspend fun getApiKeyPermissions(apiKey: String): Set<String> = withContext(Dispatchers.IO) {
+        val request = requestBuilder("$baseUrl/api-keys/current", apiKey).get().build()
+        val json = executeJson(request)
+        val apiKeyJson = json.optJSONObject("apiKey") ?: return@withContext emptySet()
+        val permissions = apiKeyJson.optJSONArray("permissions") ?: return@withContext emptySet()
+        buildSet {
+            for (i in 0 until permissions.length()) {
+                add(permissions.optString(i))
+            }
+        }
+    }
+
+    suspend fun checkOrganizationsReachable(): Boolean = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("$baseUrl/organizations")
+            .addHeader("Accept", "application/json")
+            .build()
+        okHttpClient.newCall(request).execute().use { response ->
+            when (response.code) {
+                200, 401, 403 -> true
+                else -> false
+            }
+        }
+    }
+
     suspend fun downloadDocument(
         apiKey: String,
         organizationId: String,
@@ -355,10 +444,40 @@ class ApiClient(
         okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val body = response.body?.string().orEmpty()
-                throw IOException("API error ${response.code}: $body")
+                val apiMessage = extractErrorMessage(body)
+                val hint = when (response.code) {
+                    401, 403 -> "Unauthorized. Check API key permissions."
+                    404 -> "Endpoint not found. Check the server URL."
+                    else -> null
+                }
+                val message = listOfNotNull(
+                    "API error ${response.code}",
+                    apiMessage?.takeIf { it.isNotBlank() },
+                    hint
+                ).joinToString(": ")
+                throw IOException(message)
             }
             val body = response.body?.string() ?: throw IOException("Empty response body")
+            val trimmed = body.trimStart()
+            if (trimmed.startsWith("<")) {
+                throw IOException("API endpoint returned HTML. Check the base URL.")
+            }
             return JSONObject(body)
+        }
+    }
+
+    private fun extractErrorMessage(body: String): String? {
+        if (body.isBlank()) return null
+        return try {
+            val json = JSONObject(body)
+            val error = json.optJSONObject("error")
+            when {
+                error != null -> error.optString("message").ifBlank { null }
+                json.has("message") -> json.optString("message").ifBlank { null }
+                else -> null
+            }
+        } catch (_: JSONException) {
+            null
         }
     }
 

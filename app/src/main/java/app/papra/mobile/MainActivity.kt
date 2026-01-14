@@ -2,14 +2,16 @@ package app.papra.mobile
 
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.fragment.app.FragmentActivity
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -17,21 +19,26 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.papra.mobile.data.ApiClient
 import app.papra.mobile.data.ApiKeyStore
+import app.papra.mobile.notifications.NotificationScheduler
 import app.papra.mobile.ui.ApiKeyScreen
+import app.papra.mobile.ui.BiometricLockScreen
 import app.papra.mobile.ui.DocumentPreviewScreen
 import app.papra.mobile.ui.DocumentsScreen
 import app.papra.mobile.ui.OrganizationsScreen
 import app.papra.mobile.ui.theme.PapraTheme
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            PapraTheme {
-                PapraApp()
+        val composeView = ComposeView(this).apply {
+            setContent {
+                PapraTheme {
+                    PapraApp()
+                }
             }
         }
+        setContentView(composeView)
     }
 }
 
@@ -41,9 +48,22 @@ fun PapraApp() {
     val apiKeyStore = remember { ApiKeyStore(context) }
     val apiKey by apiKeyStore.apiKeyFlow.collectAsState(initial = null)
     val baseUrl by apiKeyStore.baseUrlFlow.collectAsState(initial = null)
+    val biometricEnabled by apiKeyStore.biometricEnabledFlow.collectAsState(initial = false)
+    val notificationsEnabled by apiKeyStore.notificationsEnabledFlow.collectAsState(initial = false)
+    val defaultOrganizationId by apiKeyStore.defaultOrganizationIdFlow.collectAsState(initial = null)
     val resolvedBaseUrl = normalizeBaseUrl(baseUrl?.ifBlank { null } ?: "https://api.papra.app")
     val apiClient = remember(resolvedBaseUrl) { ApiClient(baseUrl = resolvedBaseUrl) }
     val scope = rememberCoroutineScope()
+    var isUnlocked by remember { mutableStateOf(false) }
+    var suppressAutoOpen by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(notificationsEnabled, apiKey, resolvedBaseUrl) {
+        if (notificationsEnabled && !apiKey.isNullOrBlank()) {
+            NotificationScheduler.schedule(context)
+        } else {
+            NotificationScheduler.cancel(context)
+        }
+    }
 
     if (apiKey.isNullOrBlank()) {
         ApiKeyScreen(
@@ -53,6 +73,8 @@ fun PapraApp() {
                 scope.launch { apiKeyStore.saveSettings(key, normalizedUrl) }
             }
         )
+    } else if (biometricEnabled && !isUnlocked) {
+        BiometricLockScreen(context = context, onAuthenticated = { isUnlocked = true })
     } else {
         val navController = rememberNavController()
         NavHost(navController = navController, startDestination = "orgs") {
@@ -60,10 +82,34 @@ fun PapraApp() {
                 OrganizationsScreen(
                     apiClient = apiClient,
                     apiKey = apiKey ?: "",
+                    baseUrl = resolvedBaseUrl,
+                    biometricEnabled = biometricEnabled,
+                    onToggleBiometric = { enabled ->
+                        scope.launch { apiKeyStore.setBiometricEnabled(enabled) }
+                    },
+                    notificationsEnabled = notificationsEnabled,
+                    onToggleNotifications = { enabled ->
+                        scope.launch { apiKeyStore.setNotificationsEnabled(enabled) }
+                    },
+                    defaultOrganizationId = defaultOrganizationId,
+                    onSetDefaultOrganization = { orgId ->
+                        scope.launch { apiKeyStore.setDefaultOrganizationId(orgId) }
+                    },
+                    suppressAutoOpen = suppressAutoOpen,
+                    onResetApp = {
+                        scope.launch {
+                            apiKeyStore.clearApiKey()
+                            clearOfflineCache(context)
+                        }
+                        NotificationScheduler.cancel(context)
+                        suppressAutoOpen = false
+                    },
                     onOrganizationSelected = { org ->
+                        suppressAutoOpen = false
                         navController.navigate("documents/${org.id}/${Uri.encode(org.name)}")
                     },
                     onLogout = {
+                        suppressAutoOpen = false
                         scope.launch { apiKeyStore.clearApiKey() }
                     }
                 )
@@ -82,7 +128,10 @@ fun PapraApp() {
                     apiKey = apiKey ?: "",
                     organizationId = orgId,
                     organizationName = orgName,
-                    onBack = { navController.popBackStack() },
+                    onBack = {
+                        suppressAutoOpen = true
+                        navController.popBackStack()
+                    },
                     onPreview = { document ->
                         navController.navigate("document/$orgId/${document.id}")
                     }
@@ -107,6 +156,12 @@ fun PapraApp() {
             }
         }
     }
+}
+
+private fun clearOfflineCache(context: android.content.Context) {
+    val cacheDir = java.io.File(context.filesDir, "offline_docs")
+    cacheDir.listFiles()?.forEach { it.delete() }
+    cacheDir.delete()
 }
 
 private fun normalizeBaseUrl(rawUrl: String): String {

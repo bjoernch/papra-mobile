@@ -18,7 +18,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -64,10 +63,11 @@ fun DocumentPreviewScreen(
     )
 
     var showTagDialog by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
     var showManageTagsDialog by remember { mutableStateOf(false) }
     var showCreateTagDialog by remember { mutableStateOf(false) }
     var editTag: Tag? by remember { mutableStateOf(null) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     val downloadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -186,10 +186,13 @@ fun DocumentPreviewScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Details")
-                            OutlinedButton(onClick = { showRenameDialog = true }) {
-                                Icon(Icons.Default.Edit, contentDescription = null)
-                                Spacer(modifier = Modifier.size(6.dp))
-                                Text("Rename")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { showRenameDialog = true }) {
+                                    Text("Rename")
+                                }
+                                OutlinedButton(onClick = { showDeleteDialog = true }) {
+                                    Text("Delete")
+                                }
                             }
                         }
                         Text("Name: ${document?.name ?: "-"}")
@@ -297,38 +300,6 @@ fun DocumentPreviewScreen(
         )
     }
 
-    if (showRenameDialog) {
-        var name by remember(document?.name) { mutableStateOf(document?.name ?: "") }
-        AlertDialog(
-            onDismissRequest = { showRenameDialog = false },
-            title = { Text("Rename document") },
-            text = {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.renameDocument(name)
-                        showRenameDialog = false
-                    },
-                    enabled = name.isNotBlank()
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { showRenameDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
     if (showManageTagsDialog) {
         AlertDialog(
             onDismissRequest = { showManageTagsDialog = false },
@@ -364,6 +335,62 @@ fun DocumentPreviewScreen(
             confirmButton = {
                 OutlinedButton(onClick = { showManageTagsDialog = false }) {
                     Text("Close")
+                }
+            }
+        )
+    }
+
+    if (showRenameDialog) {
+        var name by remember(document?.name) { mutableStateOf(document?.name ?: "") }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename document") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.renameDocument(name)
+                        showRenameDialog = false
+                    },
+                    enabled = name.isNotBlank()
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete document") },
+            text = { Text("This removes the document from the server. This cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        document?.let { viewModel.deleteDocument(it.id) }
+                        showDeleteDialog = false
+                        onBack()
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
                 }
             }
         )

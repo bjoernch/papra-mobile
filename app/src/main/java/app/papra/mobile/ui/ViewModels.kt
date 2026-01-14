@@ -3,6 +3,8 @@ package app.papra.mobile.ui
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.compose.runtime.getValue
@@ -23,6 +25,8 @@ import app.papra.mobile.data.guessMimeType
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import java.io.File
+import java.io.IOException
+import java.time.Instant
 
 class OrganizationsViewModel(
     private val apiClient: ApiClient,
@@ -93,6 +97,8 @@ class DocumentsViewModel(
         private set
     var isSearching: Boolean by mutableStateOf(false)
         private set
+    var isLoadingMore: Boolean by mutableStateOf(false)
+        private set
     var errorMessage: String? by mutableStateOf(null)
         private set
     var uploadInProgress: Boolean by mutableStateOf(false)
@@ -100,6 +106,12 @@ class DocumentsViewModel(
     var uploadProgress: Float? by mutableStateOf(null)
         private set
     var uploadFileName: String? by mutableStateOf(null)
+        private set
+    var recentSearches: List<String> by mutableStateOf(emptyList())
+        private set
+    var lastUpdatedAt: Instant? by mutableStateOf(null)
+        private set
+    var hasMoreDocuments: Boolean by mutableStateOf(false)
         private set
 
     init {
@@ -111,6 +123,7 @@ class DocumentsViewModel(
     }
 
     private var currentTagFilter: List<String>? = null
+    private var currentPageIndex: Int = 0
 
     fun loadDocuments(tags: List<String>? = currentTagFilter) {
         viewModelScope.launch {
@@ -118,13 +131,47 @@ class DocumentsViewModel(
             errorMessage = null
             try {
                 currentTagFilter = tags
-                val (docs, count) = apiClient.listDocuments(apiKey, organizationId, tags = tags)
+                currentPageIndex = 0
+                val (docs, count) = apiClient.listDocuments(
+                    apiKey,
+                    organizationId,
+                    pageIndex = currentPageIndex,
+                    tags = tags
+                )
                 documents = docs
                 documentsCount = count
+                hasMoreDocuments = documents.size < documentsCount
+                lastUpdatedAt = Instant.now()
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Failed to load documents"
             } finally {
                 isLoading = false
+            }
+        }
+    }
+
+    fun loadMoreDocuments() {
+        if (isLoadingMore || !hasMoreDocuments) return
+        viewModelScope.launch {
+            isLoadingMore = true
+            errorMessage = null
+            try {
+                val nextPage = currentPageIndex + 1
+                val (docs, count) = apiClient.listDocuments(
+                    apiKey,
+                    organizationId,
+                    pageIndex = nextPage,
+                    tags = currentTagFilter
+                )
+                documents = documents + docs
+                documentsCount = count
+                currentPageIndex = nextPage
+                hasMoreDocuments = documents.size < documentsCount
+                lastUpdatedAt = Instant.now()
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Failed to load more documents"
+            } finally {
+                isLoadingMore = false
             }
         }
     }
@@ -137,6 +184,7 @@ class DocumentsViewModel(
                 val (docs, count) = apiClient.listDeletedDocuments(apiKey, organizationId)
                 deletedDocuments = docs
                 deletedDocumentsCount = count
+                lastUpdatedAt = Instant.now()
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Failed to load trash"
             } finally {
@@ -166,6 +214,16 @@ class DocumentsViewModel(
         searchResultCount = 0
     }
 
+    fun addRecentSearch(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        recentSearches = listOf(trimmed) + recentSearches.filter { it != trimmed }.take(4)
+    }
+
+    fun clearRecentSearches() {
+        recentSearches = emptyList()
+    }
+
     fun loadOrganizationStats() {
         viewModelScope.launch {
             try {
@@ -182,6 +240,39 @@ class DocumentsViewModel(
                 tags = apiClient.listTags(apiKey, organizationId)
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Failed to load tags"
+            }
+        }
+    }
+
+    fun createTag(name: String, color: String, description: String?) {
+        viewModelScope.launch {
+            errorMessage = null
+            try {
+                val normalizedColor = if (color.trim().startsWith("#")) {
+                    color.trim()
+                } else {
+                    "#${color.trim()}"
+                }
+                apiClient.createTag(apiKey, organizationId, name, normalizedColor, description)
+                loadTags()
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Failed to create tag"
+            }
+        }
+    }
+
+    fun renameDocument(documentId: String, name: String) {
+        viewModelScope.launch {
+            errorMessage = null
+            try {
+                val trimmed = name.trim()
+                if (trimmed.isBlank()) {
+                    throw IllegalArgumentException("Name cannot be empty")
+                }
+                apiClient.updateDocumentName(apiKey, organizationId, documentId, trimmed)
+                loadDocuments()
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Rename failed"
             }
         }
     }
@@ -248,6 +339,7 @@ class DocumentsViewModel(
             }
         }
     }
+
     fun uploadDocument(uri: Uri, contentResolver: ContentResolver) {
         viewModelScope.launch {
             uploadInProgress = true
@@ -279,6 +371,42 @@ class DocumentsViewModel(
                 loadDocuments()
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Upload failed"
+            } finally {
+                uploadInProgress = false
+                uploadFileName = null
+                uploadProgress = null
+            }
+        }
+    }
+
+    fun uploadScannedDocument(uri: Uri, contentResolver: ContentResolver, context: Context) {
+        viewModelScope.launch {
+            uploadInProgress = true
+            uploadProgress = 0f
+            errorMessage = null
+            try {
+                val pdfFile = createPdfFromImage(uri, contentResolver, context.cacheDir)
+                uploadFileName = pdfFile.name
+                val contentLength = pdfFile.length()
+                pdfFile.inputStream().use { input ->
+                    apiClient.uploadDocument(
+                        apiKey,
+                        organizationId,
+                        pdfFile.name,
+                        "application/pdf",
+                        input,
+                        contentLength
+                    ) { sent, total ->
+                        uploadProgress = if (total != null && total > 0) {
+                            sent.toFloat() / total.toFloat()
+                        } else {
+                            null
+                        }
+                    }
+                }
+                loadDocuments()
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Scan upload failed"
             } finally {
                 uploadInProgress = false
                 uploadFileName = null
@@ -329,6 +457,60 @@ class DocumentsViewModel(
             }
         }
     }
+
+    fun shareDocumentAsPdf(context: Context, document: Document) {
+        viewModelScope.launch {
+            errorMessage = null
+            try {
+                val safeName = document.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val pdfName = if (safeName.endsWith(".pdf", ignoreCase = true)) {
+                    safeName
+                } else {
+                    "$safeName.pdf"
+                }
+                val cacheFile = File(context.cacheDir, "${document.id}-$pdfName")
+                cacheFile.outputStream().use { output ->
+                    apiClient.downloadDocument(apiKey, organizationId, document.id, output)
+                }
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    cacheFile
+                )
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/pdf"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Share document"))
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Share failed"
+            }
+        }
+    }
+}
+
+private fun createPdfFromImage(
+    uri: Uri,
+    contentResolver: ContentResolver,
+    cacheDir: File
+): File {
+    val bitmap = contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input)
+    } ?: throw IOException("Unable to read scan")
+
+    val pdfDocument = PdfDocument()
+    val pageInfo = PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, 1).create()
+    val page = pdfDocument.startPage(pageInfo)
+    page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+    pdfDocument.finishPage(page)
+
+    val file = File(cacheDir, "scan-${System.currentTimeMillis()}.pdf")
+    file.outputStream().use { output ->
+        pdfDocument.writeTo(output)
+    }
+    pdfDocument.close()
+    return file
 }
 
 class DocumentsViewModelFactory(

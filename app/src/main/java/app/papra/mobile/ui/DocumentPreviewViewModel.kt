@@ -95,7 +95,11 @@ class DocumentPreviewViewModel(
         viewModelScope.launch {
             errorMessage = null
             try {
-                document = apiClient.updateDocumentName(apiKey, organizationId, documentId, name)
+                val trimmed = name.trim()
+                if (trimmed.isBlank()) {
+                    throw IllegalArgumentException("Name cannot be empty")
+                }
+                document = apiClient.updateDocumentName(apiKey, organizationId, documentId, trimmed)
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Rename failed"
             }
@@ -120,6 +124,17 @@ class DocumentPreviewViewModel(
                 loadDocument()
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Failed to remove tag"
+            }
+        }
+    }
+
+    fun deleteDocument(id: String) {
+        viewModelScope.launch {
+            errorMessage = null
+            try {
+                apiClient.deleteDocument(apiKey, organizationId, id)
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Delete failed"
             }
         }
     }
