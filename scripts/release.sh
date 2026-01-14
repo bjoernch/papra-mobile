@@ -63,6 +63,9 @@ read -r -p "Release tag (default v${default_version}): " tag
 if [[ -z "$tag" ]]; then
   tag="v${default_version}"
 fi
+if [[ "$tag" != v* ]]; then
+  tag="v${tag}"
+fi
 if [[ -z "$tag" ]]; then
   echo "Tag cannot be empty." >&2
   exit 1
@@ -100,6 +103,10 @@ if [[ -z "$apk_path" || ! -f "$apk_path" ]]; then
 fi
 
 git tag -a "$tag" -m "Release $tag"
+
+echo "Pushing commits and tags..."
+git push
+git push --tags
 
 echo "Drafting release..."
 if command -v gh >/dev/null 2>&1; then
