@@ -66,7 +66,7 @@ fi
 tag="${tag#v}"
 tag="v${tag}"
 tag="${tag// /}"
-if ! [[ "$tag" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Tag must look like v1.2.3 (got: $tag)" >&2
   exit 1
 fi
