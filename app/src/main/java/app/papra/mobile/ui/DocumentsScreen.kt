@@ -1,11 +1,10 @@
 package app.papra.mobile.ui
 
-import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -74,9 +73,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.papra.mobile.data.ApiClient
 import app.papra.mobile.data.Document
 import app.papra.mobile.data.OfflineCacheStore
-import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlin.math.ln
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalMaterialApi::class)
@@ -113,6 +109,7 @@ fun DocumentsScreen(
     var deleteTarget by remember { mutableStateOf<Document?>(null) }
     var showScanQualityDialog by remember { mutableStateOf(false) }
     var pendingScanQuality by remember { mutableStateOf<ScanQuality?>(null) }
+    var pendingScanUri by remember { mutableStateOf<Uri?>(null) }
 
     val uploadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -139,57 +136,37 @@ fun DocumentsScreen(
     }
 
     val scanLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
-            val imageUris = scanResult?.pages?.mapNotNull { it.imageUri }.orEmpty()
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            val uri = pendingScanUri
             val quality = pendingScanQuality
-            if (imageUris.isNotEmpty() && quality != null) {
+            if (uri != null && quality != null) {
                 viewModel.uploadScannedPdfFromImages(
-                    imageUris,
+                    listOf(uri),
                     context.contentResolver,
                     context,
                     quality
                 )
             } else {
-                val pdfUri = scanResult?.pdf?.uri
-                if (pdfUri != null) {
-                    viewModel.uploadDocument(pdfUri, context.contentResolver)
-                } else {
-                    scanError = "Scanner did not return a PDF."
-                }
+                scanError = "Scan failed."
             }
-            pendingScanQuality = null
         }
+        pendingScanUri = null
+        pendingScanQuality = null
     }
 
-    val startScan: (ScanQuality) -> Unit = startScan@{ quality ->
-        val activity = context as? Activity
-        if (activity == null) {
-            scanError = "Unable to start scanner."
-            return@startScan
-        }
+    val startScan: (ScanQuality) -> Unit = { quality ->
         scanError = null
         pendingScanQuality = quality
-        val options = GmsDocumentScannerOptions.Builder()
-            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
-            .setResultFormats(
-                GmsDocumentScannerOptions.RESULT_FORMAT_JPEG,
-                GmsDocumentScannerOptions.RESULT_FORMAT_PDF
-            )
-            .setGalleryImportAllowed(true)
-            .build()
-        val scanner = GmsDocumentScanning.getClient(options)
-        scanner.getStartScanIntent(activity)
-            .addOnSuccessListener { intentSender ->
-                scanLauncher.launch(
-                    IntentSenderRequest.Builder(intentSender).build()
-                )
-            }
-            .addOnFailureListener {
-                scanError = "Scanner unavailable on this device."
-            }
+        val file = File(context.cacheDir, "scan-${System.currentTimeMillis()}.jpg")
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        pendingScanUri = uri
+        scanLauncher.launch(uri)
     }
 
     LaunchedEffect(Unit) {
