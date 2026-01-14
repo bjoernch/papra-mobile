@@ -111,6 +111,8 @@ fun DocumentsScreen(
     var scanError by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Document?>(null) }
+    var showScanQualityDialog by remember { mutableStateOf(false) }
+    var pendingScanQuality by remember { mutableStateOf<ScanQuality?>(null) }
 
     val uploadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -141,13 +143,53 @@ fun DocumentsScreen(
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
-            val pdfUri = scanResult?.pdf?.uri
-            if (pdfUri != null) {
-                viewModel.uploadDocument(pdfUri, context.contentResolver)
+            val imageUris = scanResult?.pages?.mapNotNull { it.imageUri }.orEmpty()
+            val quality = pendingScanQuality
+            if (imageUris.isNotEmpty() && quality != null) {
+                viewModel.uploadScannedPdfFromImages(
+                    imageUris,
+                    context.contentResolver,
+                    context,
+                    quality
+                )
             } else {
-                scanError = "Scanner did not return a PDF."
+                val pdfUri = scanResult?.pdf?.uri
+                if (pdfUri != null) {
+                    viewModel.uploadDocument(pdfUri, context.contentResolver)
+                } else {
+                    scanError = "Scanner did not return a PDF."
+                }
             }
+            pendingScanQuality = null
         }
+    }
+
+    val startScan: (ScanQuality) -> Unit = startScan@{ quality ->
+        val activity = context as? Activity
+        if (activity == null) {
+            scanError = "Unable to start scanner."
+            return@startScan
+        }
+        scanError = null
+        pendingScanQuality = quality
+        val options = GmsDocumentScannerOptions.Builder()
+            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .setResultFormats(
+                GmsDocumentScannerOptions.RESULT_FORMAT_JPEG,
+                GmsDocumentScannerOptions.RESULT_FORMAT_PDF
+            )
+            .setGalleryImportAllowed(true)
+            .build()
+        val scanner = GmsDocumentScanning.getClient(options)
+        scanner.getStartScanIntent(activity)
+            .addOnSuccessListener { intentSender ->
+                scanLauncher.launch(
+                    IntentSenderRequest.Builder(intentSender).build()
+                )
+            }
+            .addOnFailureListener {
+                scanError = "Scanner unavailable on this device."
+            }
     }
 
     LaunchedEffect(Unit) {
@@ -448,27 +490,7 @@ fun DocumentsScreen(
                                     }
                                     Button(
                                         onClick = {
-                                            val activity = context as? Activity
-                                            if (activity == null) {
-                                                scanError = "Unable to start scanner."
-                                                return@Button
-                                            }
-                                            scanError = null
-                                            val options = GmsDocumentScannerOptions.Builder()
-                                                .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
-                                                .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
-                                                .setGalleryImportAllowed(true)
-                                                .build()
-                                            val scanner = GmsDocumentScanning.getClient(options)
-                                            scanner.getStartScanIntent(activity)
-                                                .addOnSuccessListener { intentSender ->
-                                                    scanLauncher.launch(
-                                                        IntentSenderRequest.Builder(intentSender).build()
-                                                    )
-                                                }
-                                                .addOnFailureListener {
-                                                    scanError = "Scanner unavailable on this device."
-                                                }
+                                            showScanQualityDialog = true
                                         },
                                         modifier = Modifier
                                             .weight(1f)
@@ -865,6 +887,41 @@ fun DocumentsScreen(
                     showRenameDialog = false
                     renameTarget = null
                 }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showScanQualityDialog) {
+        AlertDialog(
+            onDismissRequest = { showScanQualityDialog = false },
+            title = { Text("Scan quality") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Choose the PDF quality. Lower quality creates smaller files.")
+                    OutlinedButton(onClick = {
+                        showScanQualityDialog = false
+                        startScan(ScanQuality.LOW)
+                    }) {
+                        Text("Low (small file)")
+                    }
+                    OutlinedButton(onClick = {
+                        showScanQualityDialog = false
+                        startScan(ScanQuality.MEDIUM)
+                    }) {
+                        Text("Medium")
+                    }
+                    OutlinedButton(onClick = {
+                        showScanQualityDialog = false
+                        startScan(ScanQuality.HIGH)
+                    }) {
+                        Text("High (larger file)")
+                    }
+                }
+            },
+            confirmButton = {
+                OutlinedButton(onClick = { showScanQualityDialog = false }) {
                     Text("Cancel")
                 }
             }

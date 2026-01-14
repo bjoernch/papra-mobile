@@ -1,3 +1,3 @@
-# Release 1.0.2
+# Release 1.0.3
 
-- Update app launcher icons and release script
+- Add biometric lock, notifications, and share upload

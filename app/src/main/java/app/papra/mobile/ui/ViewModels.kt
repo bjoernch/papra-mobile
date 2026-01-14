@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
@@ -27,6 +28,12 @@ import kotlinx.coroutines.flow.collect
 import java.io.File
 import java.io.IOException
 import java.time.Instant
+
+enum class ScanQuality {
+    LOW,
+    MEDIUM,
+    HIGH
+}
 
 class OrganizationsViewModel(
     private val apiClient: ApiClient,
@@ -379,13 +386,18 @@ class DocumentsViewModel(
         }
     }
 
-    fun uploadScannedDocument(uri: Uri, contentResolver: ContentResolver, context: Context) {
+    fun uploadScannedPdfFromImages(
+        imageUris: List<Uri>,
+        contentResolver: ContentResolver,
+        context: Context,
+        quality: ScanQuality
+    ) {
         viewModelScope.launch {
             uploadInProgress = true
             uploadProgress = 0f
             errorMessage = null
             try {
-                val pdfFile = createPdfFromImage(uri, contentResolver, context.cacheDir)
+                val pdfFile = createPdfFromImages(imageUris, contentResolver, context.cacheDir, quality)
                 uploadFileName = pdfFile.name
                 val contentLength = pdfFile.length()
                 pdfFile.inputStream().use { input ->
@@ -490,20 +502,27 @@ class DocumentsViewModel(
     }
 }
 
-private fun createPdfFromImage(
-    uri: Uri,
+private fun createPdfFromImages(
+    imageUris: List<Uri>,
     contentResolver: ContentResolver,
-    cacheDir: File
+    cacheDir: File,
+    quality: ScanQuality
 ): File {
-    val bitmap = contentResolver.openInputStream(uri)?.use { input ->
-        BitmapFactory.decodeStream(input)
-    } ?: throw IOException("Unable to read scan")
-
     val pdfDocument = PdfDocument()
-    val pageInfo = PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, 1).create()
-    val page = pdfDocument.startPage(pageInfo)
-    page.canvas.drawBitmap(bitmap, 0f, 0f, null)
-    pdfDocument.finishPage(page)
+    val maxDimension = when (quality) {
+        ScanQuality.LOW -> 1200
+        ScanQuality.MEDIUM -> 2000
+        ScanQuality.HIGH -> 3000
+    }
+    imageUris.forEachIndexed { index, uri ->
+        val bitmap = decodeScaledBitmap(contentResolver, uri, maxDimension)
+            ?: throw IOException("Unable to read scan")
+        val pageInfo = PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, index + 1).create()
+        val page = pdfDocument.startPage(pageInfo)
+        page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+        pdfDocument.finishPage(page)
+        bitmap.recycle()
+    }
 
     val file = File(cacheDir, "scan-${System.currentTimeMillis()}.pdf")
     file.outputStream().use { output ->
@@ -511,6 +530,31 @@ private fun createPdfFromImage(
     }
     pdfDocument.close()
     return file
+}
+
+private fun decodeScaledBitmap(
+    contentResolver: ContentResolver,
+    uri: Uri,
+    maxDimension: Int
+): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, bounds)
+    }
+    val (width, height) = bounds.outWidth to bounds.outHeight
+    if (width <= 0 || height <= 0) return null
+    val largest = maxOf(width, height)
+    val sampleSize = if (largest > maxDimension) {
+        (largest.toFloat() / maxDimension).toInt().coerceAtLeast(1)
+    } else {
+        1
+    }
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+    }
+    return contentResolver.openInputStream(uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, options)
+    }
 }
 
 class DocumentsViewModelFactory(
