@@ -72,18 +72,19 @@ if git rev-parse "$tag" >/dev/null 2>&1; then
   exit 1
 fi
 
+version_title="${tag#v}"
 read -r -p "Release notes (type 'draft since recent update' to auto-generate): " notes_input
 notes_file="release-notes.md"
 
 if [[ "$notes_input" == "draft since recent update" ]]; then
   {
-    echo "# Release $tag"
+    echo "# Release $version_title"
     echo
     draft_notes
   } > "$notes_file"
 else
   {
-    echo "# Release $tag"
+    echo "# Release $version_title"
     echo
     echo "$notes_input"
   } > "$notes_file"
@@ -92,9 +93,9 @@ fi
 echo "Building release APK..."
 ./gradlew assembleRelease
 
-apk_path="app/build/outputs/apk/release/app-release.apk"
-if [[ ! -f "$apk_path" ]]; then
-  echo "APK not found at $apk_path" >&2
+apk_path=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
+if [[ -z "$apk_path" || ! -f "$apk_path" ]]; then
+  echo "APK not found in app/build/outputs/apk/release" >&2
   exit 1
 fi
 
