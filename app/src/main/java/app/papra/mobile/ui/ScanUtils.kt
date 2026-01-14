@@ -67,7 +67,7 @@ fun warpBitmapWithCorners(bitmap: Bitmap, corners: List<PointF>): Bitmap {
     val src = Mat()
     Utils.bitmapToMat(bitmap, src)
     val srcPoints = corners.map {
-        Point(it.x * bitmap.width, it.y * bitmap.height)
+        Point((it.x * bitmap.width).toDouble(), (it.y * bitmap.height).toDouble())
     }
     val ordered = orderPoints(srcPoints.toTypedArray())
     val (tl, tr, br, bl) = ordered

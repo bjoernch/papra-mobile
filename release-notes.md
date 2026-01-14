@@ -1,8 +1,5 @@
-# Release 1.0.5
+# Release 1.0.6
 
-- OpenCV SDK Added
-- Update OpenCV dependency group and release notes
-- Update OpenCV dependency and release notes
-- Add JitPack repository to build configuration
-- Update OpenCV dependency and release notes
-- Replace ML Kit scanner with OpenCV for document scanning
+- Ignore release APK
+- Add OpenCV-based document scanner with CameraX
+- Add OpenCV-based document scanner with CameraX
