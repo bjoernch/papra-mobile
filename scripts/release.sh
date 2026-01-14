@@ -151,6 +151,8 @@ if [[ -z "$apk_path" || ! -f "$apk_path" ]]; then
   echo "APK not found in app/build/outputs/apk/release" >&2
   exit 1
 fi
+apk_target="papra-mobile.apk"
+cp "$apk_path" "$apk_target"
 
 git tag -a "$tag" -m "Release $tag"
 
@@ -160,7 +162,7 @@ git push --tags
 
 echo "Drafting release..."
 if command -v gh >/dev/null 2>&1; then
-  gh release create "$tag" "$apk_path" --draft --notes-file "$notes_file"
+  gh release create "$tag" "$apk_target" --draft --notes-file "$notes_file"
   echo "Draft release created with APK attached."
 else
   echo "GitHub CLI (gh) not found. Upload manually:" >&2
