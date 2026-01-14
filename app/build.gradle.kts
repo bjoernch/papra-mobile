@@ -89,7 +89,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-    implementation("com.quickbirdstudios:opencv-android:4.5.3.0")
+    implementation("com.github.quickbirdstudios:opencv-android:4.5.3.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okio:okio:3.9.0")
