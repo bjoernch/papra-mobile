@@ -18,9 +18,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.icons.Icons
-import androidx.compose.material3.icons.filled.ExitToApp
-import androidx.compose.material3.icons.filled.Refresh
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
@@ -101,7 +101,6 @@ fun OrganizationsScreen(
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Text(organization.name)
-                                Text("${organization.id}")
                             }
                         }
                     }

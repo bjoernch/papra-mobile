@@ -18,6 +18,7 @@ import androidx.navigation.navArgument
 import app.papra.mobile.data.ApiClient
 import app.papra.mobile.data.ApiKeyStore
 import app.papra.mobile.ui.ApiKeyScreen
+import app.papra.mobile.ui.DocumentPreviewScreen
 import app.papra.mobile.ui.DocumentsScreen
 import app.papra.mobile.ui.OrganizationsScreen
 import app.papra.mobile.ui.theme.PapraTheme
@@ -39,13 +40,19 @@ fun PapraApp() {
     val context = LocalContext.current
     val apiKeyStore = remember { ApiKeyStore(context) }
     val apiKey by apiKeyStore.apiKeyFlow.collectAsState(initial = null)
-    val apiClient = remember { ApiClient() }
+    val baseUrl by apiKeyStore.baseUrlFlow.collectAsState(initial = null)
+    val resolvedBaseUrl = normalizeBaseUrl(baseUrl?.ifBlank { null } ?: "https://api.papra.app")
+    val apiClient = remember(resolvedBaseUrl) { ApiClient(baseUrl = resolvedBaseUrl) }
     val scope = rememberCoroutineScope()
 
     if (apiKey.isNullOrBlank()) {
-        ApiKeyScreen(onSave = { key ->
-            scope.launch { apiKeyStore.saveApiKey(key) }
-        })
+        ApiKeyScreen(
+            initialBaseUrl = resolvedBaseUrl,
+            onSave = { key, url ->
+                val normalizedUrl = normalizeBaseUrl(url)
+                scope.launch { apiKeyStore.saveSettings(key, normalizedUrl) }
+            }
+        )
     } else {
         val navController = rememberNavController()
         NavHost(navController = navController, startDestination = "orgs") {
@@ -75,9 +82,34 @@ fun PapraApp() {
                     apiKey = apiKey ?: "",
                     organizationId = orgId,
                     organizationName = orgName,
+                    onBack = { navController.popBackStack() },
+                    onPreview = { document ->
+                        navController.navigate("document/$orgId/${document.id}")
+                    }
+                )
+            }
+            composable(
+                route = "document/{orgId}/{docId}",
+                arguments = listOf(
+                    navArgument("orgId") { type = NavType.StringType },
+                    navArgument("docId") { type = NavType.StringType }
+                )
+            ) { backStackEntry ->
+                val orgId = backStackEntry.arguments?.getString("orgId") ?: ""
+                val docId = backStackEntry.arguments?.getString("docId") ?: ""
+                DocumentPreviewScreen(
+                    apiClient = apiClient,
+                    apiKey = apiKey ?: "",
+                    organizationId = orgId,
+                    documentId = docId,
                     onBack = { navController.popBackStack() }
                 )
             }
         }
     }
+}
+
+private fun normalizeBaseUrl(rawUrl: String): String {
+    val trimmed = rawUrl.trim().removeSuffix("/")
+    return if (trimmed.endsWith("/api")) trimmed else "$trimmed/api"
 }

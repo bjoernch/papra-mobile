@@ -25,9 +25,11 @@ import androidx.compose.ui.unit.dp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ApiKeyScreen(
-    onSave: (String) -> Unit
+    initialBaseUrl: String,
+    onSave: (String, String) -> Unit
 ) {
     var apiKey by remember { mutableStateOf("") }
+    var baseUrl by remember { mutableStateOf(initialBaseUrl) }
 
     Scaffold(
         topBar = {
@@ -53,9 +55,18 @@ fun ApiKeyScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            OutlinedTextField(
+                value = baseUrl,
+                onValueChange = { baseUrl = it },
+                label = { Text("API base URL") },
+                placeholder = { Text("https://api.papra.app") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Tip: /api is added automatically if missing.")
+
             Button(
-                onClick = { onSave(apiKey) },
-                enabled = apiKey.isNotBlank(),
+                onClick = { onSave(apiKey, baseUrl) },
+                enabled = apiKey.isNotBlank() && baseUrl.isNotBlank(),
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
             ) {
                 Text("Continue")
