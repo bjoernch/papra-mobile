@@ -14,7 +14,7 @@ import org.opencv.imgproc.Imgproc
 import kotlin.math.hypot
 
 fun detectDocumentCorners(bitmap: Bitmap): List<PointF> {
-    OpenCVLoader.initDebug()
+    OpenCVLoader.initLocal()
     val src = Mat()
     Utils.bitmapToMat(bitmap, src)
     val gray = Mat()
@@ -63,7 +63,7 @@ fun detectDocumentCorners(bitmap: Bitmap): List<PointF> {
 }
 
 fun warpBitmapWithCorners(bitmap: Bitmap, corners: List<PointF>): Bitmap {
-    OpenCVLoader.initDebug()
+    OpenCVLoader.initLocal()
     val src = Mat()
     Utils.bitmapToMat(bitmap, src)
     val srcPoints = corners.map {

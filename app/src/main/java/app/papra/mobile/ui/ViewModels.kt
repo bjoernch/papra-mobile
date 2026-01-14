@@ -569,7 +569,7 @@ private fun createPdfFromImages(
         else -> Bitmap.Config.RGB_565
     }
     val applyThreshold = quality != ScanQuality.HIGH
-    OpenCVLoader.initDebug()
+    OpenCVLoader.initLocal()
     imageUris.forEachIndexed { index, uri ->
         val bitmap = decodeScaledBitmap(contentResolver, uri, maxDimension, preferredConfig)
             ?: throw IOException("Unable to read scan")
@@ -608,7 +608,7 @@ private fun createPdfFromBitmap(
     val processed = if (quality == ScanQuality.HIGH) {
         scaled
     } else {
-        OpenCVLoader.initDebug()
+        OpenCVLoader.initLocal()
         applyThreshold(scaled)
     }
     val pdfDocument = PdfDocument()

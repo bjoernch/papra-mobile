@@ -40,6 +40,10 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
 import java.io.File
 
 @Composable
@@ -53,14 +57,41 @@ fun ScannerScreen(
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var corners by remember { mutableStateOf<List<PointF>>(emptyList()) }
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasCameraPermission = granted
+        if (!granted) {
+            onError("Camera permission is required for scanning.")
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (previewBitmap == null) {
+        if (!hasCameraPermission) {
+            LaunchedEffect(Unit) {
+                permissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Requesting camera permission…")
+            }
+        } else if (previewBitmap == null) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     val previewView = PreviewView(ctx).apply {
                         scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     }
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     cameraProviderFuture.addListener({
@@ -69,7 +100,7 @@ fun ScannerScreen(
                             it.setSurfaceProvider(previewView.surfaceProvider)
                         }
                         val capture = ImageCapture.Builder()
-                            .setTargetResolution(Size(2000, 2000))
+                            .setTargetResolution(Size(1600, 1600))
                             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                             .build()
                         imageCapture = capture
