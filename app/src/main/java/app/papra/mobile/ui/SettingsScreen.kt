@@ -2,11 +2,12 @@ package app.papra.mobile.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Notifications
@@ -17,6 +18,8 @@ import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -37,6 +40,16 @@ fun SettingsScreen(
     baseUrl: String,
     biometricEnabled: Boolean,
     onToggleBiometric: (Boolean) -> Unit,
+    pinEnabled: Boolean,
+    onSetPin: (String) -> Unit,
+    onClearPin: () -> Unit,
+    autoLockMinutes: Int,
+    onSetAutoLockMinutes: (Int) -> Unit,
+    hideInRecents: Boolean,
+    onToggleHideInRecents: (Boolean) -> Unit,
+    onLockNow: () -> Unit,
+    uploadWifiOnly: Boolean,
+    onToggleUploadWifiOnly: (Boolean) -> Unit,
     notificationsEnabled: Boolean,
     onToggleNotifications: (Boolean) -> Unit,
     onResetApp: () -> Unit,
@@ -45,10 +58,24 @@ fun SettingsScreen(
 ) {
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var newApiKey by remember { mutableStateOf("") }
+    var showAutoLockMenu by remember { mutableStateOf(false) }
+    var showPinDialog by remember { mutableStateOf(false) }
+    var newPin by remember { mutableStateOf("") }
+    var confirmPin by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf<String?>(null) }
+    val autoLockOptions = listOf(0, 1, 5, 15, 30, 60)
+    val autoLockLabel = when (autoLockMinutes) {
+        0 -> "Off"
+        1 -> "1 minute"
+        else -> "$autoLockMinutes minutes"
+    }
+
+    val scrollState = rememberScrollState()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -78,6 +105,74 @@ fun SettingsScreen(
                         Text("Biometric lock")
                     }
                     Switch(checked = biometricEnabled, onCheckedChange = onToggleBiometric)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("PIN fallback")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = { showPinDialog = true }) {
+                            Text(if (pinEnabled) "Change PIN" else "Set PIN")
+                        }
+                        if (pinEnabled) {
+                            OutlinedButton(onClick = onClearPin) {
+                                Text("Remove")
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Auto-lock")
+                    Column(horizontalAlignment = Alignment.End) {
+                        OutlinedButton(onClick = { showAutoLockMenu = true }) {
+                            Text(autoLockLabel)
+                        }
+                        DropdownMenu(
+                            expanded = showAutoLockMenu,
+                            onDismissRequest = { showAutoLockMenu = false }
+                        ) {
+                            autoLockOptions.forEach { minutes ->
+                                val label = when (minutes) {
+                                    0 -> "Off"
+                                    1 -> "1 minute"
+                                    else -> "$minutes minutes"
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        onSetAutoLockMinutes(minutes)
+                                        showAutoLockMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Hide in app switcher")
+                    Switch(checked = hideInRecents, onCheckedChange = onToggleHideInRecents)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Uploads on Wi-Fi only")
+                    Switch(checked = uploadWifiOnly, onCheckedChange = onToggleUploadWifiOnly)
+                }
+                OutlinedButton(onClick = onLockNow, enabled = biometricEnabled) {
+                    Icon(Icons.Default.Settings, contentDescription = null)
+                    Text("Lock now", modifier = Modifier.padding(start = 8.dp))
                 }
             }
         }
@@ -138,6 +233,66 @@ fun SettingsScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showApiKeyDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showPinDialog) {
+        AlertDialog(
+            onDismissRequest = { showPinDialog = false },
+            title = { Text(if (pinEnabled) "Change PIN" else "Set PIN") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = newPin,
+                        onValueChange = { value ->
+                            newPin = value.filter { it.isDigit() }.take(8)
+                            pinError = null
+                        },
+                        label = { Text("PIN (4-8 digits)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = confirmPin,
+                        onValueChange = { value ->
+                            confirmPin = value.filter { it.isDigit() }.take(8)
+                            pinError = null
+                        },
+                        label = { Text("Confirm PIN") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (!pinError.isNullOrBlank()) {
+                        Text(pinError ?: "")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newPin.length < 4) {
+                            pinError = "PIN must be at least 4 digits."
+                            return@Button
+                        }
+                        if (newPin != confirmPin) {
+                            pinError = "PINs do not match."
+                            return@Button
+                        }
+                        onSetPin(newPin)
+                        newPin = ""
+                        confirmPin = ""
+                        pinError = null
+                        showPinDialog = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showPinDialog = false }) {
                     Text("Cancel")
                 }
             }

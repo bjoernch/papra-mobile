@@ -24,7 +24,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun BiometricLockScreen(
     context: Context,
-    onAuthenticated: () -> Unit
+    onAuthenticated: () -> Unit,
+    onUsePin: (() -> Unit)? = null
 ) {
     val activity = context as? FragmentActivity
 
@@ -54,6 +55,11 @@ fun BiometricLockScreen(
                         }
                     ) {
                         Text("Unlock")
+                    }
+                    if (onUsePin != null) {
+                        Button(onClick = { onUsePin() }) {
+                            Text("Use PIN")
+                        }
                     }
                 }
             }

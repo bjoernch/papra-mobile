@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -15,14 +16,21 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -36,24 +44,41 @@ import app.papra.mobile.data.Organization
 fun ShareUploadScreen(
     apiClient: ApiClient,
     apiKey: String,
-    sharedUri: Uri,
+    sharedUris: List<Uri>,
+    queueStore: app.papra.mobile.data.ShareUploadQueueStore,
+    workManager: androidx.work.WorkManager,
+    wifiOnly: Boolean,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
     val viewModel: ShareUploadViewModel = viewModel(
-        factory = ShareUploadViewModelFactory(apiClient, apiKey)
+        factory = ShareUploadViewModelFactory(apiClient, apiKey, queueStore, workManager, wifiOnly)
     )
+    var showCloseBlocked by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.loadOrganizations()
     }
+    val sessionIds = viewModel.currentSessionIds
+    val sessionInQueue = viewModel.uploadQueue.any { it.id in sessionIds }
+    val sessionStarted = sessionIds.isNotEmpty()
+    val sessionComplete = sessionStarted && !sessionInQueue
+    val canClose = !sessionStarted || sessionComplete
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Share to Papra") },
                 navigationIcon = {
-                    IconButton(onClick = onClose) {
+                    IconButton(
+                        onClick = {
+                            if (canClose) {
+                                onClose()
+                            } else {
+                                showCloseBlocked = true
+                            }
+                        }
+                    ) {
                         Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                 }
@@ -123,11 +148,64 @@ fun ShareUploadScreen(
                             )
                         }
                     }
+                    if (sessionComplete) {
+                        item {
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("All files uploaded.")
+                                    OutlinedButton(onClick = onClose) {
+                                        Text("Close")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (viewModel.uploadQueue.isNotEmpty()) {
+                        item {
+                            Text("Upload queue", style = MaterialTheme.typography.titleSmall)
+                        }
+                        items(viewModel.uploadQueue) { item ->
+                            val workInfo = viewModel.workStates[item.workId]
+                            val progress = workInfo?.progress?.getFloat(app.papra.mobile.work.ShareUploadWorker.KEY_PROGRESS, -1f)
+                            val immediateProgress = viewModel.immediateProgress[item.id]
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(item.fileName)
+                                    if (progress != null && progress >= 0f) {
+                                        LinearProgressIndicator(progress = progress)
+                                    } else if (immediateProgress != null) {
+                                        LinearProgressIndicator(progress = immediateProgress)
+                                    }
+                                    val stateLabel = when (workInfo?.state) {
+                                        androidx.work.WorkInfo.State.SUCCEEDED -> "Uploaded"
+                                        androidx.work.WorkInfo.State.FAILED -> "Failed"
+                                        androidx.work.WorkInfo.State.RUNNING -> "Uploading..."
+                                        androidx.work.WorkInfo.State.ENQUEUED -> "Queued"
+                                        else -> viewModel.immediateStatus[item.id] ?: "Queued"
+                                    }
+                                    Text(stateLabel)
+                                    if (workInfo?.state == androidx.work.WorkInfo.State.FAILED) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(onClick = { viewModel.retryQueuedItem(item) }) {
+                                                Text("Retry")
+                                            }
+                                            OutlinedButton(onClick = { viewModel.removeQueuedItem(item.id) }) {
+                                                Text("Remove")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     items(viewModel.organizations) { org ->
                         OrganizationCard(
                             organization = org,
                             onSelect = {
-                                viewModel.uploadToOrganization(sharedUri, context.contentResolver, org.id)
+                                viewModel.uploadImmediately(context, sharedUris, context.contentResolver, org.id)
                             }
                         )
                     }
@@ -135,6 +213,20 @@ fun ShareUploadScreen(
             }
         }
     }
+
+    if (showCloseBlocked) {
+        AlertDialog(
+            onDismissRequest = { showCloseBlocked = false },
+            title = { Text("Uploads in progress") },
+            text = { Text("Please wait until all files are uploaded before closing.") },
+            confirmButton = {
+                Button(onClick = { showCloseBlocked = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
 }
 
 @Composable

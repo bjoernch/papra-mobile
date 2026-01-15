@@ -20,6 +20,8 @@ import app.papra.mobile.data.OrganizationStats
 import app.papra.mobile.data.Organization
 import app.papra.mobile.data.OfflineCacheStore
 import app.papra.mobile.data.Tag
+import app.papra.mobile.data.RecentSearchStore
+import app.papra.mobile.data.SavedSearchStore
 import app.papra.mobile.data.getFileName
 import app.papra.mobile.data.getMimeType
 import app.papra.mobile.data.guessMimeType
@@ -78,7 +80,9 @@ class DocumentsViewModel(
     private val apiClient: ApiClient,
     private val apiKey: String,
     private val organizationId: String,
-    private val offlineCacheStore: OfflineCacheStore
+    private val offlineCacheStore: OfflineCacheStore,
+    private val recentSearchStore: RecentSearchStore,
+    private val savedSearchStore: SavedSearchStore
 ) : ViewModel() {
     var documents: List<Document> by mutableStateOf(emptyList())
         private set
@@ -114,7 +118,11 @@ class DocumentsViewModel(
         private set
     var uploadFileName: String? by mutableStateOf(null)
         private set
+    var uploadQueue: List<UploadTask> by mutableStateOf(emptyList())
+        private set
     var recentSearches: List<String> by mutableStateOf(emptyList())
+        private set
+    var savedSearches: List<String> by mutableStateOf(emptyList())
         private set
     var lastUpdatedAt: Instant? by mutableStateOf(null)
         private set
@@ -127,10 +135,35 @@ class DocumentsViewModel(
                 cachedDocIds = ids
             }
         }
+        viewModelScope.launch {
+            recentSearches = recentSearchStore.load()
+        }
+        viewModelScope.launch {
+            savedSearches = savedSearchStore.load()
+        }
     }
 
     private var currentTagFilter: List<String>? = null
     private var currentPageIndex: Int = 0
+
+    private var activeUploadId: String? = null
+
+    data class UploadTask(
+        val id: String,
+        val file: File,
+        val mimeType: String,
+        val displayName: String,
+        val status: UploadStatus,
+        val progress: Float? = null,
+        val errorMessage: String? = null
+    )
+
+    enum class UploadStatus {
+        QUEUED,
+        UPLOADING,
+        SUCCESS,
+        FAILED
+    }
 
     fun loadDocuments(tags: List<String>? = currentTagFilter) {
         viewModelScope.launch {
@@ -225,10 +258,29 @@ class DocumentsViewModel(
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
         recentSearches = listOf(trimmed) + recentSearches.filter { it != trimmed }.take(4)
+        recentSearchStore.save(recentSearches)
     }
 
     fun clearRecentSearches() {
         recentSearches = emptyList()
+        recentSearchStore.save(emptyList())
+    }
+
+    fun addSavedSearch(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        savedSearches = listOf(trimmed) + savedSearches.filter { it != trimmed }.take(9)
+        savedSearchStore.save(savedSearches)
+    }
+
+    fun removeSavedSearch(query: String) {
+        savedSearches = savedSearches.filterNot { it == query }
+        savedSearchStore.save(savedSearches)
+    }
+
+    fun clearSavedSearches() {
+        savedSearches = emptyList()
+        savedSearchStore.save(emptyList())
     }
 
     fun loadOrganizationStats() {
@@ -268,18 +320,28 @@ class DocumentsViewModel(
         }
     }
 
-    fun renameDocument(documentId: String, name: String) {
+    fun renameDocument(
+        documentId: String,
+        name: String,
+        onComplete: (Result<Unit>) -> Unit = {}
+    ) {
         viewModelScope.launch {
             errorMessage = null
-            try {
-                val trimmed = name.trim()
-                if (trimmed.isBlank()) {
-                    throw IllegalArgumentException("Name cannot be empty")
-                }
+            val trimmed = name.trim()
+            if (trimmed.isBlank()) {
+                val error = IllegalArgumentException("Name cannot be empty")
+                errorMessage = error.message
+                onComplete(Result.failure(error))
+                return@launch
+            }
+            runCatching {
                 apiClient.updateDocumentName(apiKey, organizationId, documentId, trimmed)
+            }.onSuccess {
                 loadDocuments()
-            } catch (e: Exception) {
-                errorMessage = e.message ?: "Rename failed"
+                onComplete(Result.success(Unit))
+            }.onFailure {
+                errorMessage = it.message ?: "Rename failed"
+                onComplete(Result.failure(it))
             }
         }
     }
@@ -349,75 +411,25 @@ class DocumentsViewModel(
 
     fun uploadDocument(uri: Uri, contentResolver: ContentResolver) {
         viewModelScope.launch {
-            uploadInProgress = true
-            uploadProgress = 0f
             errorMessage = null
             try {
                 val fileName = contentResolver.getFileName(uri)
-                val mimeType = contentResolver.getMimeType(uri)
-                uploadFileName = fileName
-                val contentLength = contentResolver.openAssetFileDescriptor(uri, "r")?.use {
-                    it.length.takeIf { length -> length >= 0 }
-                }
-                contentResolver.openInputStream(uri)?.use { input ->
-                    apiClient.uploadDocument(
-                        apiKey,
-                        organizationId,
-                        fileName,
-                        mimeType,
-                        input,
-                        contentLength
-                    ) { sent, total ->
-                        uploadProgress = if (total != null && total > 0) {
-                            sent.toFloat() / total.toFloat()
-                        } else {
-                            null
-                        }
-                    }
-                } ?: throw IllegalStateException("Unable to read file")
-                loadDocuments()
+                val mimeType = contentResolver.getMimeType(uri) ?: guessMimeType(fileName)
+                val tempFile = copyToTempFile(contentResolver, uri, fileName)
+                enqueueUpload(tempFile, mimeType, fileName)
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Upload failed"
-            } finally {
-                uploadInProgress = false
-                uploadFileName = null
-                uploadProgress = null
             }
         }
     }
 
     fun uploadDocumentFile(file: File, mimeType: String) {
         viewModelScope.launch {
-            uploadInProgress = true
-            uploadProgress = 0f
             errorMessage = null
             try {
-                uploadFileName = file.name
-                val contentLength = file.length().takeIf { it > 0 }
-                    ?: throw IllegalStateException("Empty file")
-                file.inputStream().use { input ->
-                    apiClient.uploadDocument(
-                        apiKey,
-                        organizationId,
-                        file.name,
-                        mimeType,
-                        input,
-                        contentLength
-                    ) { sent, total ->
-                        uploadProgress = if (total != null && total > 0) {
-                            sent.toFloat() / total.toFloat()
-                        } else {
-                            null
-                        }
-                    }
-                }
-                loadDocuments()
+                enqueueUpload(file, mimeType, file.name)
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Upload failed"
-            } finally {
-                uploadInProgress = false
-                uploadFileName = null
-                uploadProgress = null
             }
         }
     }
@@ -429,38 +441,105 @@ class DocumentsViewModel(
         quality: ScanQuality
     ) {
         viewModelScope.launch {
-            uploadInProgress = true
-            uploadProgress = 0f
             errorMessage = null
             try {
                 val pdfFile = createPdfFromImages(imageUris, contentResolver, context.cacheDir, quality)
-                uploadFileName = pdfFile.name
-                val contentLength = pdfFile.length()
-                pdfFile.inputStream().use { input ->
+                enqueueUpload(pdfFile, "application/pdf", pdfFile.name)
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Scan upload failed"
+            }
+        }
+    }
+
+    fun retryUpload(taskId: String) {
+        val task = uploadQueue.firstOrNull { it.id == taskId } ?: return
+        val updated = task.copy(status = UploadStatus.QUEUED, progress = null, errorMessage = null)
+        uploadQueue = uploadQueue.map { if (it.id == taskId) updated else it }
+        startNextUploadIfIdle()
+    }
+
+    fun removeUpload(taskId: String) {
+        uploadQueue = uploadQueue.filterNot { it.id == taskId }
+    }
+
+    private fun enqueueUpload(file: File, mimeType: String, displayName: String) {
+        val task = UploadTask(
+            id = "${System.currentTimeMillis()}-${file.name}",
+            file = file,
+            mimeType = mimeType,
+            displayName = displayName,
+            status = UploadStatus.QUEUED
+        )
+        uploadQueue = uploadQueue + task
+        startNextUploadIfIdle()
+    }
+
+    private fun startNextUploadIfIdle() {
+        if (activeUploadId != null) return
+        val next = uploadQueue.firstOrNull { it.status == UploadStatus.QUEUED } ?: return
+        activeUploadId = next.id
+        performUpload(next)
+    }
+
+    private fun performUpload(task: UploadTask) {
+        viewModelScope.launch {
+            uploadInProgress = true
+            uploadProgress = 0f
+            uploadFileName = task.displayName
+            uploadQueue = uploadQueue.map {
+                if (it.id == task.id) it.copy(status = UploadStatus.UPLOADING, progress = 0f) else it
+            }
+            try {
+                task.file.inputStream().use { input ->
                     apiClient.uploadDocument(
                         apiKey,
                         organizationId,
-                        pdfFile.name,
-                        "application/pdf",
+                        task.displayName,
+                        task.mimeType,
                         input,
-                        contentLength
+                        task.file.length()
                     ) { sent, total ->
-                        uploadProgress = if (total != null && total > 0) {
+                        val progress = if (total != null && total > 0) {
                             sent.toFloat() / total.toFloat()
                         } else {
                             null
                         }
+                        uploadProgress = progress
+                        uploadQueue = uploadQueue.map {
+                            if (it.id == task.id) it.copy(progress = progress) else it
+                        }
                     }
+                }
+                uploadQueue = uploadQueue.map {
+                    if (it.id == task.id) it.copy(status = UploadStatus.SUCCESS, progress = 1f) else it
                 }
                 loadDocuments()
             } catch (e: Exception) {
-                errorMessage = e.message ?: "Scan upload failed"
+                uploadQueue = uploadQueue.map {
+                    if (it.id == task.id) {
+                        it.copy(status = UploadStatus.FAILED, errorMessage = e.message ?: "Upload failed")
+                    } else {
+                        it
+                    }
+                }
+                errorMessage = e.message ?: "Upload failed"
             } finally {
                 uploadInProgress = false
                 uploadFileName = null
                 uploadProgress = null
+                activeUploadId = null
+                startNextUploadIfIdle()
             }
         }
+    }
+
+    private fun copyToTempFile(contentResolver: ContentResolver, uri: Uri, fileName: String): File {
+        val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val tempFile = File.createTempFile("upload-", "-$safeName")
+        contentResolver.openInputStream(uri)?.use { input ->
+            tempFile.outputStream().use { output -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Unable to read file")
+        return tempFile
     }
 
     fun downloadDocumentToUri(
@@ -648,12 +727,21 @@ class DocumentsViewModelFactory(
     private val apiClient: ApiClient,
     private val apiKey: String,
     private val organizationId: String,
-    private val offlineCacheStore: OfflineCacheStore
+    private val offlineCacheStore: OfflineCacheStore,
+    private val recentSearchStore: RecentSearchStore,
+    private val savedSearchStore: SavedSearchStore
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(DocumentsViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return DocumentsViewModel(apiClient, apiKey, organizationId, offlineCacheStore) as T
+            return DocumentsViewModel(
+                apiClient,
+                apiKey,
+                organizationId,
+                offlineCacheStore,
+                recentSearchStore,
+                savedSearchStore
+            ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

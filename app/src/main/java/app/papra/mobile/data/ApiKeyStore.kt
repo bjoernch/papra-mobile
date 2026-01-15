@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import org.json.JSONObject
+import java.security.MessageDigest
 
 private val Context.dataStore by preferencesDataStore(name = "papra_settings")
 
@@ -16,8 +17,12 @@ class ApiKeyStore(private val context: Context) {
     private val baseUrlPref = stringPreferencesKey("api_base_url")
     private val biometricPref = stringPreferencesKey("biometric_enabled")
     private val notificationsPref = stringPreferencesKey("notifications_enabled")
+    private val uploadWifiOnlyPref = stringPreferencesKey("upload_wifi_only")
     private val lastSeenDocsPref = stringPreferencesKey("last_seen_docs")
     private val defaultOrgPref = stringPreferencesKey("default_org_id")
+    private val autoLockPref = stringPreferencesKey("auto_lock_minutes")
+    private val hideRecentsPref = stringPreferencesKey("hide_in_recents")
+    private val pinHashPref = stringPreferencesKey("pin_hash")
 
     val apiKeyFlow: Flow<String?> = context.dataStore.data.map { prefs ->
         prefs[apiKeyPref]
@@ -33,6 +38,22 @@ class ApiKeyStore(private val context: Context) {
 
     val notificationsEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[notificationsPref]?.toBooleanStrictOrNull() ?: false
+    }
+
+    val uploadWifiOnlyFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[uploadWifiOnlyPref]?.toBooleanStrictOrNull() ?: true
+    }
+
+    val autoLockMinutesFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[autoLockPref]?.toIntOrNull() ?: 0
+    }
+
+    val hideInRecentsFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[hideRecentsPref]?.toBooleanStrictOrNull() ?: false
+    }
+
+    val pinHashFlow: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[pinHashPref]
     }
 
     val defaultOrganizationIdFlow: Flow<String?> = context.dataStore.data.map { prefs ->
@@ -58,6 +79,24 @@ class ApiKeyStore(private val context: Context) {
         }
     }
 
+    suspend fun setUploadWifiOnly(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[uploadWifiOnlyPref] = enabled.toString()
+        }
+    }
+
+    suspend fun setAutoLockMinutes(minutes: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[autoLockPref] = minutes.toString()
+        }
+    }
+
+    suspend fun setHideInRecents(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[hideRecentsPref] = enabled.toString()
+        }
+    }
+
     suspend fun setDefaultOrganizationId(organizationId: String?) {
         context.dataStore.edit { prefs ->
             if (organizationId.isNullOrBlank()) {
@@ -66,6 +105,23 @@ class ApiKeyStore(private val context: Context) {
                 prefs[defaultOrgPref] = organizationId
             }
         }
+    }
+
+    suspend fun setPin(pin: String) {
+        context.dataStore.edit { prefs ->
+            prefs[pinHashPref] = hashPin(pin)
+        }
+    }
+
+    suspend fun clearPin() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(pinHashPref)
+        }
+    }
+
+    fun verifyPin(pin: String, storedHash: String?): Boolean {
+        if (storedHash.isNullOrBlank()) return false
+        return hashPin(pin) == storedHash
     }
 
     suspend fun getApiKey(): String? {
@@ -78,6 +134,10 @@ class ApiKeyStore(private val context: Context) {
 
     suspend fun getNotificationsEnabled(): Boolean {
         return context.dataStore.data.first()[notificationsPref]?.toBooleanStrictOrNull() ?: false
+    }
+
+    suspend fun getUploadWifiOnly(): Boolean {
+        return context.dataStore.data.first()[uploadWifiOnlyPref]?.toBooleanStrictOrNull() ?: true
     }
 
     suspend fun getLastSeenDocuments(): Map<String, String> {
@@ -101,8 +161,18 @@ class ApiKeyStore(private val context: Context) {
             prefs.remove(baseUrlPref)
             prefs.remove(biometricPref)
             prefs.remove(notificationsPref)
+            prefs.remove(uploadWifiOnlyPref)
+            prefs.remove(autoLockPref)
+            prefs.remove(hideRecentsPref)
             prefs.remove(lastSeenDocsPref)
             prefs.remove(defaultOrgPref)
+            prefs.remove(pinHashPref)
         }
+    }
+
+    private fun hashPin(pin: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest(pin.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 }

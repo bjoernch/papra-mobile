@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Scaffold
@@ -75,12 +76,22 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.papra.mobile.data.ApiClient
 import app.papra.mobile.data.Document
 import app.papra.mobile.data.OfflineCacheStore
+import app.papra.mobile.data.SavedSearchStore
+import app.papra.mobile.data.RecentSearchStore
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlin.math.ln
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.Instant
+
+private enum class DateFilter {
+    ALL,
+    LAST_7_DAYS,
+    LAST_30_DAYS,
+    THIS_YEAR
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalMaterialApi::class)
 @Composable
@@ -100,8 +111,17 @@ fun DocumentsScreen(
 ) {
     val context = LocalContext.current
     val offlineCacheStore = remember { OfflineCacheStore(context) }
+    val recentSearchStore = remember(organizationId) { RecentSearchStore(context, organizationId) }
+    val savedSearchStore = remember(organizationId) { SavedSearchStore(context, organizationId) }
     val viewModel: DocumentsViewModel = viewModel(
-        factory = DocumentsViewModelFactory(apiClient, apiKey, organizationId, offlineCacheStore)
+        factory = DocumentsViewModelFactory(
+            apiClient,
+            apiKey,
+            organizationId,
+            offlineCacheStore,
+            recentSearchStore,
+            savedSearchStore
+        )
     )
     val scope = rememberCoroutineScope()
 
@@ -118,11 +138,16 @@ fun DocumentsScreen(
     var expandedDocId by remember { mutableStateOf<String?>(null) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Document?>(null) }
+    var renameName by remember { mutableStateOf("") }
+    var renameError by remember { mutableStateOf<String?>(null) }
+    var isRenaming by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<Document?>(null) }
     var showScanQualityDialog by remember { mutableStateOf(false) }
     var pendingScanQuality by remember { mutableStateOf<ScanQuality?>(null) }
+    var dateFilter by remember { mutableStateOf(DateFilter.ALL) }
+    var showDateFilterMenu by remember { mutableStateOf(false) }
 
     val uploadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -201,6 +226,12 @@ fun DocumentsScreen(
         }
     }
 
+    LaunchedEffect(renameTarget?.id) {
+        renameName = renameTarget?.name ?: ""
+        renameError = null
+        isRenaming = false
+    }
+
     val startScan: (ScanQuality) -> Unit = startScan@{ quality ->
         val activity = context as? Activity
         if (activity == null) {
@@ -264,11 +295,28 @@ fun DocumentsScreen(
         2 -> viewModel.deletedDocuments
         else -> viewModel.documents
     }
-    val filteredList = if (showingSearch) {
+    val searchFiltered = if (showingSearch) {
         val query = searchQuery.trim()
         baseList.filter { it.name.contains(query, ignoreCase = true) }
     } else {
         baseList
+    }
+    val filteredList = when (dateFilter) {
+        DateFilter.ALL -> searchFiltered
+        else -> {
+            val now = Instant.now()
+            val threshold = when (dateFilter) {
+                DateFilter.LAST_7_DAYS -> now.minusSeconds(7L * 24 * 60 * 60)
+                DateFilter.LAST_30_DAYS -> now.minusSeconds(30L * 24 * 60 * 60)
+                DateFilter.THIS_YEAR -> now.minusSeconds(365L * 24 * 60 * 60)
+                DateFilter.ALL -> now
+            }
+            searchFiltered.filter { doc ->
+                val createdAt = doc.createdAt ?: return@filter true
+                val instant = runCatching { Instant.parse(createdAt) }.getOrNull() ?: return@filter true
+                instant.isAfter(threshold)
+            }
+        }
     }
     val activeCount = when (selectedTab) {
         1 -> baseList.size
@@ -432,6 +480,49 @@ fun DocumentsScreen(
                                         }
                                     }
                                 )
+                                if (searchQuery.isNotBlank()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End
+                                    ) {
+                                        OutlinedButton(onClick = { viewModel.addSavedSearch(searchQuery) }) {
+                                            Text("Save search")
+                                        }
+                                    }
+                                }
+                                if (viewModel.savedSearches.isNotEmpty()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Saved searches")
+                                        OutlinedButton(onClick = { viewModel.clearSavedSearches() }) {
+                                            Text("Clear")
+                                        }
+                                    }
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        viewModel.savedSearches.forEach { query ->
+                                            InputChip(
+                                                selected = false,
+                                                onClick = { searchQuery = query },
+                                                label = { Text(query) },
+                                                trailingIcon = {
+                                                    Icon(
+                                                        Icons.Default.Clear,
+                                                        contentDescription = "Remove",
+                                                        modifier = Modifier.clickable {
+                                                            viewModel.removeSavedSearch(query)
+                                                        }
+                                                    )
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
                                 if (viewModel.recentSearches.isNotEmpty()) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -454,6 +545,41 @@ fun DocumentsScreen(
                                             )
                                         }
                                     }
+                                }
+
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    InputChip(
+                                        selected = selectedTab == 0 && selectedTagId == null && dateFilter == DateFilter.ALL,
+                                        onClick = {
+                                            selectedTab = 0
+                                            selectedTagId = null
+                                            dateFilter = DateFilter.ALL
+                                        },
+                                        label = { Text("All") }
+                                    )
+                                    InputChip(
+                                        selected = selectedTab == 1,
+                                        onClick = { selectedTab = 1 },
+                                        label = { Text("Offline") }
+                                    )
+                                    InputChip(
+                                        selected = selectedTagId != null,
+                                        onClick = { showTagFilterDialog = true },
+                                        label = { Text("Tagged") }
+                                    )
+                                    InputChip(
+                                        selected = dateFilter == DateFilter.LAST_7_DAYS,
+                                        onClick = { dateFilter = DateFilter.LAST_7_DAYS },
+                                        label = { Text("Last 7 days") }
+                                    )
+                                    InputChip(
+                                        selected = dateFilter == DateFilter.LAST_30_DAYS,
+                                        onClick = { dateFilter = DateFilter.LAST_30_DAYS },
+                                        label = { Text("Last 30 days") }
+                                    )
                                 }
 
                                 TabRow(selectedTabIndex = selectedTab) {
@@ -486,7 +612,7 @@ fun DocumentsScreen(
                                                 "Tag filter: ${tagName ?: "Selected"}"
                                             } ?: "Tag filter: All"
                                         )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                             OutlinedButton(onClick = { showTagFilterDialog = true }) {
                                                 Text("Filter")
                                             }
@@ -494,6 +620,48 @@ fun DocumentsScreen(
                                                 OutlinedButton(onClick = { selectedTagId = null }) {
                                                     Text("Clear")
                                                 }
+                                            }
+                                            OutlinedButton(onClick = { showDateFilterMenu = true }) {
+                                                val label = when (dateFilter) {
+                                                    DateFilter.ALL -> "All dates"
+                                                    DateFilter.LAST_7_DAYS -> "Last 7 days"
+                                                    DateFilter.LAST_30_DAYS -> "Last 30 days"
+                                                    DateFilter.THIS_YEAR -> "This year"
+                                                }
+                                                Text(label)
+                                            }
+                                            DropdownMenu(
+                                                expanded = showDateFilterMenu,
+                                                onDismissRequest = { showDateFilterMenu = false }
+                                            ) {
+                                                DropdownMenuItem(
+                                                    text = { Text("All dates") },
+                                                    onClick = {
+                                                        dateFilter = DateFilter.ALL
+                                                        showDateFilterMenu = false
+                                                    }
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Last 7 days") },
+                                                    onClick = {
+                                                        dateFilter = DateFilter.LAST_7_DAYS
+                                                        showDateFilterMenu = false
+                                                    }
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Last 30 days") },
+                                                    onClick = {
+                                                        dateFilter = DateFilter.LAST_30_DAYS
+                                                        showDateFilterMenu = false
+                                                    }
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("This year") },
+                                                    onClick = {
+                                                        dateFilter = DateFilter.THIS_YEAR
+                                                        showDateFilterMenu = false
+                                                    }
+                                                )
                                             }
                                         }
                                     }
@@ -510,6 +678,41 @@ fun DocumentsScreen(
                                                 LinearProgressIndicator(progress = viewModel.uploadProgress ?: 0f)
                                             } else {
                                                 LinearProgressIndicator()
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (viewModel.uploadQueue.isNotEmpty()) {
+                                    Card(modifier = Modifier.fillMaxWidth()) {
+                                        Column(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text("Upload queue")
+                                            viewModel.uploadQueue.forEach { task ->
+                                                Column(
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Text(task.displayName)
+                                                    when (task.status) {
+                                                        DocumentsViewModel.UploadStatus.QUEUED -> Text("Queued")
+                                                        DocumentsViewModel.UploadStatus.UPLOADING -> Text("Uploading…")
+                                                        DocumentsViewModel.UploadStatus.SUCCESS -> Text("Uploaded")
+                                                        DocumentsViewModel.UploadStatus.FAILED -> {
+                                                            Text(task.errorMessage ?: "Failed")
+                                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                                OutlinedButton(onClick = { viewModel.retryUpload(task.id) }) {
+                                                                    Text("Retry")
+                                                                }
+                                                                OutlinedButton(onClick = { viewModel.removeUpload(task.id) }) {
+                                                                    Text("Remove")
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -939,7 +1142,6 @@ fun DocumentsScreen(
 
     if (showRenameDialog) {
         val doc = renameTarget
-        var name by remember(doc) { mutableStateOf(doc?.name ?: "") }
         AlertDialog(
             onDismissRequest = {
                 showRenameDialog = false
@@ -947,25 +1149,53 @@ fun DocumentsScreen(
             },
             title = { Text("Rename document") },
             text = {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = renameName,
+                        onValueChange = { renameName = it },
+                        label = { Text("Name") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (renameError != null) {
+                        Text(
+                            renameError ?: "",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        if (doc != null) {
-                            viewModel.renameDocument(doc.id, name)
+                        if (doc != null && !isRenaming) {
+                            isRenaming = true
+                            renameError = null
+                            viewModel.renameDocument(doc.id, renameName.trim()) { result ->
+                                isRenaming = false
+                                result.onSuccess {
+                                    showRenameDialog = false
+                                    renameTarget = null
+                                }.onFailure {
+                                    renameError = it.message ?: "Rename failed"
+                                }
+                            }
                         }
-                        showRenameDialog = false
-                        renameTarget = null
                     },
-                    enabled = name.isNotBlank()
+                    enabled = renameName.trim().isNotBlank() && !isRenaming
                 ) {
-                    Text("Save")
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isRenaming) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                        }
+                        Text("Save")
+                    }
                 }
             },
             dismissButton = {

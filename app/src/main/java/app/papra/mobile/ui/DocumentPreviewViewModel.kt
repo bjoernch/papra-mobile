@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.compose.runtime.getValue
@@ -25,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 
 class DocumentPreviewViewModel(
     private val apiClient: ApiClient,
@@ -47,6 +49,12 @@ class DocumentPreviewViewModel(
     var isPreviewLoading: Boolean by mutableStateOf(false)
         private set
     var errorMessage: String? by mutableStateOf(null)
+        private set
+    var isSavingRotation: Boolean by mutableStateOf(false)
+        private set
+    var saveMessage: String? by mutableStateOf(null)
+        private set
+    var saveErrorMessage: String? by mutableStateOf(null)
         private set
 
     private var cachedFile: File? = null
@@ -135,6 +143,50 @@ class DocumentPreviewViewModel(
                 apiClient.deleteDocument(apiKey, organizationId, id)
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Delete failed"
+            }
+        }
+    }
+
+    fun saveRotatedPdf(context: Context, rotations: List<Float>, replaceOriginal: Boolean) {
+        viewModelScope.launch {
+            isSavingRotation = true
+            saveMessage = null
+            saveErrorMessage = null
+            try {
+                val doc = document ?: apiClient.getDocument(apiKey, organizationId, documentId)
+                document = doc
+                val mimeType = doc.mimeType ?: guessMimeType(doc.name)
+                if (mimeType != "application/pdf" && !doc.name.endsWith(".pdf", ignoreCase = true)) {
+                    throw IllegalStateException("Rotation export is only available for PDF files.")
+                }
+                val rotatedFile = withContext(Dispatchers.IO) {
+                    renderRotatedPdf(context, doc, rotations)
+                }
+                val targetName = if (replaceOriginal) {
+                    doc.name
+                } else {
+                    appendSuffix(doc.name, "rotated")
+                }
+                apiClient.uploadDocument(
+                    apiKey,
+                    organizationId,
+                    targetName,
+                    "application/pdf",
+                    rotatedFile.inputStream(),
+                    rotatedFile.length()
+                )
+                if (replaceOriginal) {
+                    apiClient.deleteDocument(apiKey, organizationId, documentId)
+                }
+                saveMessage = if (replaceOriginal) {
+                    "Rotation saved. Original deleted."
+                } else {
+                    "Rotation saved as a new document."
+                }
+            } catch (e: Exception) {
+                saveErrorMessage = e.message ?: "Failed to save rotation"
+            } finally {
+                isSavingRotation = false
             }
         }
     }
@@ -305,6 +357,58 @@ class DocumentPreviewViewModel(
             mimeType == "application/pdf" || file.extension.equals("pdf", ignoreCase = true) ->
                 renderPdfPages(file)
             else -> null
+        }
+    }
+
+    private suspend fun renderRotatedPdf(context: Context, doc: Document, rotations: List<Float>): File {
+        val source = ensureCachedFile(context, doc)
+        val output = File(context.cacheDir, "rotated-${doc.id}.pdf")
+        val pdfDocument = PdfDocument()
+        ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                if (renderer.pageCount == 0) {
+                    throw IllegalStateException("PDF has no pages.")
+                }
+                for (index in 0 until renderer.pageCount) {
+                    val rotation = rotations.getOrNull(index) ?: 0f
+                    val page = renderer.openPage(index)
+                    page.use {
+                        val width = it.width
+                        val height = it.height
+                        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        it.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        val rotated = if (rotation % 360f != 0f) {
+                            val matrix = Matrix().apply { postRotate(rotation) }
+                            Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true)
+                        } else {
+                            bitmap
+                        }
+                        val pageInfo = PdfDocument.PageInfo.Builder(
+                            rotated.width,
+                            rotated.height,
+                            index + 1
+                        ).create()
+                        val outPage = pdfDocument.startPage(pageInfo)
+                        outPage.canvas.drawBitmap(rotated, 0f, 0f, null)
+                        pdfDocument.finishPage(outPage)
+                        if (rotated != bitmap) {
+                            bitmap.recycle()
+                        }
+                    }
+                }
+            }
+        }
+        FileOutputStream(output).use { pdfDocument.writeTo(it) }
+        pdfDocument.close()
+        return output
+    }
+
+    private fun appendSuffix(fileName: String, suffix: String): String {
+        val dotIndex = fileName.lastIndexOf('.')
+        return if (dotIndex > 0) {
+            fileName.substring(0, dotIndex) + "-$suffix" + fileName.substring(dotIndex)
+        } else {
+            "$fileName-$suffix"
         }
     }
 

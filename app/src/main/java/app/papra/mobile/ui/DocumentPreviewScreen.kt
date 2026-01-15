@@ -16,15 +16,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -38,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -45,19 +50,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.papra.mobile.data.ApiClient
 import app.papra.mobile.data.Tag
+import kotlinx.coroutines.launch
 import kotlin.math.ln
 import androidx.compose.foundation.ExperimentalFoundationApi
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -79,6 +90,8 @@ fun DocumentPreviewScreen(
     var editTag: Tag? by remember { mutableStateOf(null) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showSaveRotationDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val downloadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -95,6 +108,25 @@ fun DocumentPreviewScreen(
 
     val document = viewModel.document
     val previewPages = viewModel.previewPages
+    val rotations = remember { androidx.compose.runtime.mutableStateListOf<Float>() }
+    val scales = remember { androidx.compose.runtime.mutableStateListOf<Float>() }
+    val offsetsX = remember { androidx.compose.runtime.mutableStateListOf<Float>() }
+    val offsetsY = remember { androidx.compose.runtime.mutableStateListOf<Float>() }
+
+    LaunchedEffect(previewPages.size) {
+        if (rotations.size != previewPages.size) {
+            rotations.clear()
+            scales.clear()
+            offsetsX.clear()
+            offsetsY.clear()
+            repeat(previewPages.size) {
+                rotations.add(0f)
+                scales.add(1f)
+                offsetsX.add(0f)
+                offsetsY.add(0f)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -157,23 +189,132 @@ fun DocumentPreviewScreen(
                         if (viewModel.isPreviewLoading) {
                             CircularProgressIndicator(modifier = Modifier.size(32.dp))
                         } else if (previewPages.isNotEmpty()) {
-                            val pagerState = rememberPagerState(pageCount = { previewPages.size })
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                HorizontalPager(
-                                    state = pagerState,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { page ->
-                                    Image(
-                                        bitmap = previewPages[page],
-                                        contentDescription = "Preview page ${page + 1}",
+                            if (rotations.size != previewPages.size) {
+                                Text("Preparing preview...")
+                            } else {
+                                val pagerState = rememberPagerState(pageCount = { previewPages.size })
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (previewPages.size > 1) {
+                                            Text(
+                                                text = "Page ${pagerState.currentPage + 1} of ${previewPages.size}",
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            IconButton(onClick = {
+                                                val index = pagerState.currentPage
+                                                val current = rotations.getOrNull(index) ?: 0f
+                                                rotations[index] = (current + 90f) % 360f
+                                            }) {
+                                                Icon(Icons.Default.RotateRight, contentDescription = "Rotate")
+                                            }
+                                            OutlinedButton(onClick = {
+                                                val index = pagerState.currentPage
+                                                scales[index] = 1f
+                                                offsetsX[index] = 0f
+                                                offsetsY[index] = 0f
+                                                rotations[index] = 0f
+                                            }) {
+                                                Text("Reset view")
+                                            }
+                                            OutlinedButton(onClick = { showSaveRotationDialog = true }) {
+                                                Text("Save rotation")
+                                            }
+                                        }
+                                    }
+                                    if (viewModel.isSavingRotation) {
+                                        Text("Saving rotation...")
+                                    } else if (!viewModel.saveMessage.isNullOrBlank()) {
+                                        Text(viewModel.saveMessage ?: "", color = MaterialTheme.colorScheme.primary)
+                                    } else if (!viewModel.saveErrorMessage.isNullOrBlank()) {
+                                        Text(viewModel.saveErrorMessage ?: "", color = MaterialTheme.colorScheme.error)
+                                    }
+                                    HorizontalPager(
+                                        state = pagerState,
                                         modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-                                if (previewPages.size > 1) {
-                                    Text(
-                                        text = "Page ${pagerState.currentPage + 1} of ${previewPages.size}",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
+                                    ) { page ->
+                                        val minScale = 1f
+                                        val maxScale = 4f
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Color(0xFF111216))
+                                                .pointerInput(page) {
+                                                    detectTapGestures(
+                                                        onDoubleTap = {
+                                                            val current = scales[page]
+                                                            if (current > 1f) {
+                                                                scales[page] = 1f
+                                                                offsetsX[page] = 0f
+                                                                offsetsY[page] = 0f
+                                                            } else {
+                                                                scales[page] = 2f
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                                .pointerInput(page) {
+                                                    detectTransformGestures { _, pan, zoom, _ ->
+                                                        val newScale = (scales[page] * zoom).coerceIn(minScale, maxScale)
+                                                        if (newScale != scales[page]) {
+                                                            scales[page] = newScale
+                                                        }
+                                                        if (newScale > minScale) {
+                                                            offsetsX[page] = offsetsX[page] + pan.x
+                                                            offsetsY[page] = offsetsY[page] + pan.y
+                                                        } else {
+                                                            offsetsX[page] = 0f
+                                                            offsetsY[page] = 0f
+                                                        }
+                                                    }
+                                                }
+                                        ) {
+                                            Image(
+                                                bitmap = previewPages[page],
+                                                contentDescription = "Preview page ${page + 1}",
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .align(Alignment.Center)
+                                                    .graphicsLayer(
+                                                        scaleX = scales[page],
+                                                        scaleY = scales[page],
+                                                        translationX = offsetsX[page],
+                                                        translationY = offsetsY[page],
+                                                        rotationZ = rotations[page]
+                                                    )
+                                            )
+                                        }
+                                    }
+                                    if (previewPages.size > 1) {
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            contentPadding = PaddingValues(vertical = 4.dp)
+                                        ) {
+                                            items(previewPages.size) { page ->
+                                                val isSelected = page == pagerState.currentPage
+                                                Image(
+                                                    bitmap = previewPages[page],
+                                                    contentDescription = "Page ${page + 1}",
+                                                    modifier = Modifier
+                                                        .size(64.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(
+                                                            if (isSelected) Color(0xFF2F6BFF).copy(alpha = 0.2f) else Color(0xFFF3F4F7)
+                                                        )
+                                                        .clickable {
+                                                            scope.launch { pagerState.animateScrollToPage(page) }
+                                                        }
+                                                        .graphicsLayer(rotationZ = rotations[page])
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         } else {
@@ -418,6 +559,39 @@ fun DocumentPreviewScreen(
             confirmButton = {
                 OutlinedButton(onClick = { showManageTagsDialog = false }) {
                     Text("Close")
+                }
+            }
+        )
+    }
+
+    if (showSaveRotationDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveRotationDialog = false },
+            title = { Text("Save rotation") },
+            text = { Text("Choose how to save the rotated PDF.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSaveRotationDialog = false
+                        viewModel.saveRotatedPdf(context, rotations.toList(), replaceOriginal = true)
+                    }
+                ) {
+                    Text("Replace file")
+                }
+            },
+            dismissButton = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            showSaveRotationDialog = false
+                            viewModel.saveRotatedPdf(context, rotations.toList(), replaceOriginal = false)
+                        }
+                    ) {
+                        Text("Create copy")
+                    }
+                    OutlinedButton(onClick = { showSaveRotationDialog = false }) {
+                        Text("Cancel")
+                    }
                 }
             }
         )

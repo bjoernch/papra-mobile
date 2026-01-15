@@ -40,7 +40,10 @@ fun isValidBaseUrl(rawUrl: String): Boolean {
         val host = uri.host ?: return false
         val hasScheme = uri.scheme == "https" || uri.scheme == "http"
         val hasTld = host.contains(".") && host.substringAfterLast('.').length >= 2
-        hasScheme && hasTld
+        val isIpv4 = host.matches(Regex("^\\d{1,3}(?:\\.\\d{1,3}){3}$")) &&
+            host.split(".").all { it.toIntOrNull()?.let { part -> part in 0..255 } == true }
+        val isLocalhost = host == "localhost"
+        hasScheme && (hasTld || isIpv4 || isLocalhost)
     } catch (e: Exception) {
         false
     }

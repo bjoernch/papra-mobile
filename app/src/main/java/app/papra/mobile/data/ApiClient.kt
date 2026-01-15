@@ -166,9 +166,8 @@ class ApiClient(
         try {
             val json = executeJson(formRequest)
             return@withContext json.getJSONObject("document").toDocument()
-        } catch (e: IOException) {
-            val message = e.message.orEmpty()
-            if (!message.contains("invalid_request.body", ignoreCase = true)) {
+        } catch (e: ApiException) {
+            if (!isInvalidRequestBodyResponse(e)) {
                 throw e
             }
         }
@@ -482,7 +481,7 @@ class ApiClient(
                     apiMessage?.takeIf { it.isNotBlank() },
                     hint
                 ).joinToString(": ")
-                throw IOException(message)
+                throw ApiException(response.code, message, hint)
             }
             val body = response.body?.string() ?: throw IOException("Empty response body")
             val trimmed = body.trimStart()
@@ -490,6 +489,14 @@ class ApiClient(
                 throw IOException("API endpoint returned HTML. Check the base URL.")
             }
             return JSONObject(body)
+        }
+    }
+
+    private fun isInvalidRequestBodyResponse(exception: ApiException): Boolean {
+        if (exception.statusCode != 400) return false
+        val message = exception.message.orEmpty()
+        return listOf("invalid_request.body", "invalid request body").any {
+            message.contains(it, ignoreCase = true)
         }
     }
 
