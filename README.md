@@ -20,13 +20,14 @@ Grab Papra Mobile from the official [GitHub releases page](https://github.com/bj
 
 <a href="https://github.com/bjoernch/papra-mobile/releases/latest/download/papra-mobile.apk"><img src="https://user-images.githubusercontent.com/69304392/148696068-0cfea65d-b18f-4685-82b5-329a330b1c0d.png" alt="Get it on GitHub" height="100" /></a>
 
-### Obtainium setup
+### Obtainium setup (automatic updates)
 
-1. Open Obtainium and tap **Add App**.
-2. Choose **GitHub Release**.
-3. Paste this repo URL: `https://github.com/bjoernch/papra-mobile`.
-4. Set APK filter to `papra-mobile.apk` (or use regex `papra-mobile\\.apk$`).
-5. Save. Obtainium will track new releases automatically.
+1. Install Obtainium from https://obtainium.imranr.dev/ and open it.
+2. Tap **Add App**.
+3. Choose **GitHub Release**.
+4. Paste this repo URL: `https://github.com/bjoernch/papra-mobile`.
+5. Set APK filter to `papra-mobile.apk` (or use regex `papra-mobile\\.apk$`).
+6. Save. Obtainium will track new releases automatically.
 
 ## Setup
 

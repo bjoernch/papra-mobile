@@ -109,7 +109,7 @@ fun PapraApp() {
 
     if (apiKey.isNullOrBlank()) {
         ApiKeyScreen(
-            initialBaseUrl = resolvedBaseUrl,
+            initialBaseUrl = baseUrl?.trim().orEmpty(),
             onSave = { key, url ->
                 val normalizedUrl = normalizeBaseUrl(url)
                 scope.launch { apiKeyStore.saveSettings(key, normalizedUrl) }
