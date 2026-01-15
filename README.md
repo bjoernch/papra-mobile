@@ -18,8 +18,8 @@ Papra Mobile is an unofficial Android client for Papra that lets you browse, upl
 
 Grab Papra Mobile from the official [GitHub releases page](https://github.com/bjoernch/papra-mobile/releases), or keep up with updates with the following:
 
-<a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/{%22id%22:%22app.papra.mobile%22,%22url%22:%22https://github.com/bjoernch/papra-mobile%22,%22author%22:%22bjoernch%22,%22name%22:%22Papra%20Mobile%22,%22additionalSettings%22:%22{\\%22apkFilterRegEx\\%22:\\%22papra-mobile\\\\.apk$\\%22,\\%22invertAPKFilter\\%22:false}%22}"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/b1c8ac6f2ab08497189721a788a5763e28ff64cd/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="100"></a>
-<a href="https://github.com/bjoernch/papra-mobile/releases"><img src="https://user-images.githubusercontent.com/69304392/148696068-0cfea65d-b18f-4685-82b5-329a330b1c0d.png" alt="Get it on GitHub" height="100" /></a>
+<a href="obtainium://app/{%22id%22:%22app.papra.mobile%22,%22url%22:%22https://github.com/bjoernch/papra-mobile%22,%22author%22:%22bjoernch%22,%22name%22:%22Papra%20Mobile%22,%22additionalSettings%22:%22{\\%22apkFilterRegEx\\%22:\\%22papra-mobile\\\\.apk$\\%22,\\%22invertAPKFilter\\%22:false}%22}"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/b1c8ac6f2ab08497189721a788a5763e28ff64cd/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="100"></a>
+<a href="https://github.com/bjoernch/papra-mobile/releases/latest/download/papra-mobile.apk"><img src="https://user-images.githubusercontent.com/69304392/148696068-0cfea65d-b18f-4685-82b5-329a330b1c0d.png" alt="Get it on GitHub" height="100" /></a>
 
 ## Setup
 
