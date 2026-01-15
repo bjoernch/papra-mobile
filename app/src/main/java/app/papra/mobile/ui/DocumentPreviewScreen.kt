@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -55,8 +57,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.papra.mobile.data.ApiClient
 import app.papra.mobile.data.Tag
 import kotlin.math.ln
+import androidx.compose.foundation.ExperimentalFoundationApi
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun DocumentPreviewScreen(
     apiClient: ApiClient,
@@ -91,7 +94,7 @@ fun DocumentPreviewScreen(
     }
 
     val document = viewModel.document
-    val previewBitmap = viewModel.previewBitmap
+    val previewPages = viewModel.previewPages
 
     Scaffold(
         topBar = {
@@ -145,12 +148,26 @@ fun DocumentPreviewScreen(
                     ) {
                         if (viewModel.isPreviewLoading) {
                             CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                        } else if (previewBitmap != null) {
-                            Image(
-                                bitmap = previewBitmap,
-                                contentDescription = "Preview",
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                        } else if (previewPages.isNotEmpty()) {
+                            val pagerState = rememberPagerState(pageCount = { previewPages.size })
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                HorizontalPager(
+                                    state = pagerState,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { page ->
+                                    Image(
+                                        bitmap = previewPages[page],
+                                        contentDescription = "Preview page ${page + 1}",
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                if (previewPages.size > 1) {
+                                    Text(
+                                        text = "Page ${pagerState.currentPage + 1} of ${previewPages.size}",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
                         } else {
                             Text(viewModel.previewMessage ?: "Preview not available")
                         }

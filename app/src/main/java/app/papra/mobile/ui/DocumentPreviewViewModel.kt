@@ -38,7 +38,7 @@ class DocumentPreviewViewModel(
         private set
     var activities: List<ActivityEvent> by mutableStateOf(emptyList())
         private set
-    var previewBitmap: androidx.compose.ui.graphics.ImageBitmap? by mutableStateOf(null)
+    var previewPages: List<androidx.compose.ui.graphics.ImageBitmap> by mutableStateOf(emptyList())
         private set
     var previewMessage: String? by mutableStateOf(null)
         private set
@@ -201,15 +201,15 @@ class DocumentPreviewViewModel(
         viewModelScope.launch {
             isPreviewLoading = true
             previewMessage = null
-            previewBitmap = null
+            previewPages = emptyList()
             try {
                 val doc = document ?: apiClient.getDocument(apiKey, organizationId, documentId)
                 document = doc
                 val file = ensureCachedFile(context, doc)
                 val mimeType = doc.mimeType ?: guessMimeType(doc.name)
-                val bitmap = withContext(Dispatchers.IO) { renderPreview(file, mimeType) }
-                if (bitmap != null) {
-                    previewBitmap = bitmap.asImageBitmap()
+                val bitmaps = withContext(Dispatchers.IO) { renderPreviewPages(file, mimeType) }
+                if (!bitmaps.isNullOrEmpty()) {
+                    previewPages = bitmaps.map { it.asImageBitmap() }
                 } else {
                     previewMessage = "Preview not available"
                 }
@@ -299,11 +299,11 @@ class DocumentPreviewViewModel(
         return file
     }
 
-    private fun renderPreview(file: File, mimeType: String): Bitmap? {
+    private fun renderPreviewPages(file: File, mimeType: String): List<Bitmap>? {
         return when {
-            mimeType.startsWith("image/") -> decodeBitmap(file)
+            mimeType.startsWith("image/") -> decodeBitmap(file)?.let { listOf(it) }
             mimeType == "application/pdf" || file.extension.equals("pdf", ignoreCase = true) ->
-                renderPdfFirstPage(file)
+                renderPdfPages(file)
             else -> null
         }
     }
@@ -313,21 +313,25 @@ class DocumentPreviewViewModel(
         return BitmapFactory.decodeFile(file.absolutePath, options)
     }
 
-    private fun renderPdfFirstPage(file: File): Bitmap? {
+    private fun renderPdfPages(file: File): List<Bitmap>? {
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
             PdfRenderer(descriptor).use { renderer ->
                 if (renderer.pageCount == 0) return null
-                val page = renderer.openPage(0)
-                page.use {
-                    val maxWidth = 1200
-                    val scale = minOf(1f, maxWidth.toFloat() / it.width.toFloat())
-                    val width = (it.width * scale).toInt()
-                    val height = (it.height * scale).toInt()
-                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                    val matrix = Matrix().apply { postScale(scale, scale) }
-                    it.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    return bitmap
+                val maxWidth = 1200
+                val pages = mutableListOf<Bitmap>()
+                for (index in 0 until renderer.pageCount) {
+                    val page = renderer.openPage(index)
+                    page.use {
+                        val scale = minOf(1f, maxWidth.toFloat() / it.width.toFloat())
+                        val width = (it.width * scale).toInt()
+                        val height = (it.height * scale).toInt()
+                        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        val matrix = Matrix().apply { postScale(scale, scale) }
+                        it.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        pages.add(bitmap)
+                    }
                 }
+                return pages
             }
         }
     }
