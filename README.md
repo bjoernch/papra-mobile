@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon-new.png" alt="Papra Mobile" width="120" style="border-radius: 24px;" />
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png" alt="Papra Mobile" width="120" />
 </div>
 
 # Papra Mobile
