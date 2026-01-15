@@ -99,7 +99,15 @@ fun DocumentPreviewScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(document?.name ?: "Document") },
+                title = {
+                    val title = when {
+                        document?.mimeType?.startsWith("image/") == true -> "Photo preview"
+                        document?.mimeType == "application/pdf" ||
+                            document?.name?.endsWith(".pdf", ignoreCase = true) == true -> "PDF preview"
+                        else -> "Document preview"
+                    }
+                    Text(title)
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.Close, contentDescription = "Close")
