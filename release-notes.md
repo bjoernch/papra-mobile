@@ -1,3 +1,3 @@
-# Release 1.0.8
+# Release 1.0.9
 
-- Improve document detection and add auto-detect button
+- Add real-time document detection to ScannerScreen

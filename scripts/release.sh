@@ -55,6 +55,27 @@ draft_notes() {
   fi
 }
 
+release_template() {
+  cat <<'EOF'
+Papra Mobile — first public release 🎉
+
+Highlights
+- Connect to your own Papra instance using an API key
+- Browse organizations and documents
+- Upload files and scan documents to PDF
+- Tag management, bulk actions, and search
+- Offline downloads + offline library view
+- Trash view and document activity
+
+Notes
+- Requires an API key with: organizations:read, documents:read, documents:create, documents:update, documents:delete, tags:read, tags:create, tags:update, tags:delete
+- Base URL should be your instance root (e.g. https://docs.example.com)
+
+Assets
+- papra-mobile.apk
+EOF
+}
+
 require_clean_worktree
 require_no_unpushed_commits
 
@@ -81,18 +102,15 @@ fi
 
 version_title="${tag#v}"
 read -r -p "Release notes (type 'draft since recent update' to auto-generate): " notes_input
-notes_file="release-notes.md"
+notes_file="release-updates.md"
 
 if [[ "$notes_input" == "draft since recent update" ]]; then
-  {
-    echo "# Release $version_title"
-    echo
-    draft_notes
-  } > "$notes_file"
+  if [[ ! -f "$notes_file" ]]; then
+    echo "Missing $notes_file. Create it before releasing." >&2
+    exit 1
+  fi
 else
   {
-    echo "# Release $version_title"
-    echo
     echo "$notes_input"
   } > "$notes_file"
 fi

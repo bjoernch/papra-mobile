@@ -17,5 +17,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "papra-mobile"
 include(":app")
-include(":opencv")
-project(":opencv").projectDir = file("sdk")

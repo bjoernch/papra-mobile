@@ -1,8 +1,10 @@
 package app.papra.mobile.ui
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
@@ -23,14 +25,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -41,8 +41,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Scaffold
@@ -61,10 +61,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.border
@@ -72,7 +75,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.papra.mobile.data.ApiClient
 import app.papra.mobile.data.Document
 import app.papra.mobile.data.OfflineCacheStore
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlin.math.ln
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalMaterialApi::class)
 @Composable
@@ -82,17 +89,24 @@ fun DocumentsScreen(
     organizationId: String,
     organizationName: String,
     onBack: () -> Unit,
-    onPreview: (Document) -> Unit
+    onPreview: (Document) -> Unit,
+    showTopBar: Boolean = true,
+    scanRequestId: Int = 0,
+    uploadRequestId: Int = 0,
+    onScanRequestHandled: () -> Unit = {},
+    onUploadRequestHandled: () -> Unit = {},
+    initialTab: Int = 0
 ) {
     val context = LocalContext.current
     val offlineCacheStore = remember { OfflineCacheStore(context) }
     val viewModel: DocumentsViewModel = viewModel(
         factory = DocumentsViewModelFactory(apiClient, apiKey, organizationId, offlineCacheStore)
     )
+    val scope = rememberCoroutineScope()
 
     var pendingDownload: Document? by remember { mutableStateOf(null) }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember(initialTab) { mutableStateOf(initialTab) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var showBulkTagDialog by remember { mutableStateOf(false) }
@@ -108,7 +122,6 @@ fun DocumentsScreen(
     var deleteTarget by remember { mutableStateOf<Document?>(null) }
     var showScanQualityDialog by remember { mutableStateOf(false) }
     var pendingScanQuality by remember { mutableStateOf<ScanQuality?>(null) }
-    var showScanner by remember { mutableStateOf(false) }
 
     val uploadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -134,15 +147,75 @@ fun DocumentsScreen(
         pendingDownload = null
     }
 
-    val startScan: (ScanQuality) -> Unit = { quality ->
+    val scanLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+            val imageUris = scanResult?.pages?.mapNotNull { it.imageUri }.orEmpty()
+            val quality = pendingScanQuality ?: ScanQuality.MEDIUM
+            if (imageUris.isNotEmpty()) {
+                viewModel.uploadScannedPdfFromImages(
+                    imageUris,
+                    context.contentResolver,
+                    context,
+                    quality
+                )
+            } else {
+                val pdfUri = scanResult?.pdf?.uri
+                if (pdfUri != null) {
+                    viewModel.uploadDocument(pdfUri, context.contentResolver)
+                } else {
+                    scanError = "Scanner did not return a PDF."
+                }
+            }
+            pendingScanQuality = null
+        }
+    }
+
+    val startScan: (ScanQuality) -> Unit = startScan@{ quality ->
+        val activity = context as? Activity
+        if (activity == null) {
+            scanError = "Unable to start scanner."
+            return@startScan
+        }
         scanError = null
         pendingScanQuality = quality
-        showScanner = true
+        val options = GmsDocumentScannerOptions.Builder()
+            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .setResultFormats(
+                GmsDocumentScannerOptions.RESULT_FORMAT_JPEG,
+                GmsDocumentScannerOptions.RESULT_FORMAT_PDF
+            )
+            .setGalleryImportAllowed(true)
+            .build()
+        val scanner = GmsDocumentScanning.getClient(options)
+        scanner.getStartScanIntent(activity)
+            .addOnSuccessListener { intentSender ->
+                scanLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+            }
+            .addOnFailureListener {
+                scanError = "Scanner unavailable on this device."
+            }
     }
 
     LaunchedEffect(Unit) {
         viewModel.loadDocuments()
         viewModel.loadTags()
+    }
+
+    LaunchedEffect(scanRequestId) {
+        if (scanRequestId > 0) {
+            showScanQualityDialog = true
+            onScanRequestHandled()
+        }
+    }
+
+    LaunchedEffect(uploadRequestId) {
+        if (uploadRequestId > 0) {
+            uploadLauncher.launch(arrayOf("*/*"))
+            onUploadRequestHandled()
+        }
     }
 
     LaunchedEffect(selectedTagId) {
@@ -193,21 +266,23 @@ fun DocumentsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(organizationName) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+            if (showTopBar) {
+                TopAppBar(
+                    title = { Text(organizationName) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            viewModel.loadDocuments(tags = selectedTagId?.let { listOf(it) })
+                        }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        }
                     }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        viewModel.loadDocuments(tags = selectedTagId?.let { listOf(it) })
-                    }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
-                    }
-                }
-            )
+                )
+            }
         },
         floatingActionButton = {}
     ) { padding ->
@@ -396,64 +471,6 @@ fun DocumentsScreen(
                                     }
                                 }
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = { showApplyTagDialog = true },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(48.dp)
-                                    ) {
-                                        Text("Apply tag to list")
-                                    }
-                                    OutlinedButton(
-                                        onClick = { showCreateTagDialog = true },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(48.dp)
-                                    ) {
-                                        Text("Create tag")
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Button(
-                                        onClick = { uploadLauncher.launch(arrayOf("*/*")) },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(48.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.primary,
-                                            contentColor = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                    ) {
-                                        Icon(Icons.Default.UploadFile, contentDescription = null)
-                                        Spacer(modifier = Modifier.size(8.dp))
-                                        Text("Choose file")
-                                    }
-                                    Button(
-                                        onClick = {
-                                            showScanQualityDialog = true
-                                        },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(48.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.primary,
-                                            contentColor = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                    ) {
-                                        Icon(Icons.Default.DocumentScanner, contentDescription = null)
-                                        Spacer(modifier = Modifier.size(8.dp))
-                                        Text("Scan PDF")
-                                    }
-                                }
-
                                 if (viewModel.uploadInProgress) {
                                     Card(modifier = Modifier.fillMaxWidth()) {
                                         Column(
@@ -505,6 +522,18 @@ fun DocumentsScreen(
                                         OutlinedButton(
                                             onClick = {
                                                 val docs = filteredList.filter { selectedIds.contains(it.id) }
+                                                viewModel.shareDocumentsAsPdf(context, docs)
+                                                selectionMode = false
+                                                selectedIds = emptySet()
+                                            },
+                                            enabled = selectedIds.isNotEmpty(),
+                                            modifier = Modifier.weight(1f).height(44.dp)
+                                        ) {
+                                            Text("Share")
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                val docs = filteredList.filter { selectedIds.contains(it.id) }
                                                 viewModel.deleteDocuments(docs)
                                                 selectionMode = false
                                                 selectedIds = emptySet()
@@ -515,13 +544,23 @@ fun DocumentsScreen(
                                         ) {
                                             Text("Delete")
                                         }
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
                                         OutlinedButton(
                                             onClick = { showBulkTagDialog = true },
-                                            enabled = selectedIds.isNotEmpty()
-                                            ,
+                                            enabled = selectedIds.isNotEmpty(),
                                             modifier = Modifier.weight(1f).height(44.dp)
                                         ) {
                                             Text("Add tag")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { selectionMode = false; selectedIds = emptySet() },
+                                            modifier = Modifier.weight(1f).height(44.dp)
+                                        ) {
+                                            Text("Done")
                                         }
                                     }
                                     Row(
@@ -632,6 +671,12 @@ fun DocumentsScreen(
     }
 
     if (showBulkTagDialog) {
+        var newTagName by remember { mutableStateOf("") }
+        var bulkTagError by remember { mutableStateOf<String?>(null) }
+        var hue by remember { mutableStateOf(215f) }
+        var saturation by remember { mutableStateOf(0.7f) }
+        var value by remember { mutableStateOf(1f) }
+        val previewColor = Color.hsv(hue, saturation, value)
         AlertDialog(
             onDismissRequest = { showBulkTagDialog = false },
             title = { Text("Add tag to selected") },
@@ -649,10 +694,75 @@ fun DocumentsScreen(
                                     selectionMode = false
                                     selectedIds = emptySet()
                                 },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = runCatching {
+                                        Color(android.graphics.Color.parseColor(tag.color ?: "#2F6BFF"))
+                                    }.getOrDefault(MaterialTheme.colorScheme.primary),
+                                    contentColor = runCatching {
+                                        Color(android.graphics.Color.parseColor(tag.color ?: "#2F6BFF"))
+                                    }.getOrDefault(MaterialTheme.colorScheme.primary).let { color ->
+                                        if (color.luminance() > 0.6f) Color.Black else Color.White
+                                    }
+                                )
                             ) {
                                 Text(tag.name)
                             }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = newTagName,
+                        onValueChange = { newTagName = it },
+                        label = { Text("New tag name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    if (newTagName.isNotBlank()) {
+                        HsvColorPicker(
+                            hue = hue,
+                            saturation = saturation,
+                            value = value,
+                            onColorChange = { newHue, newSat, newVal ->
+                                hue = newHue
+                                saturation = newSat
+                                value = newVal
+                            }
+                        )
+                        Button(
+                            onClick = {
+                                val docs = filteredList.filter { selectedIds.contains(it.id) }
+                                val trimmed = newTagName.trim()
+                                if (trimmed.isBlank() || docs.isEmpty()) return@Button
+                                scope.launch {
+                                    try {
+                                        val tag = apiClient.createTag(
+                                            apiKey,
+                                            organizationId,
+                                            trimmed,
+                                            formatHexColor(previewColor),
+                                            null
+                                        )
+                                        viewModel.loadTags()
+                                        viewModel.addTagToDocuments(tag.id, docs)
+                                        showBulkTagDialog = false
+                                        selectionMode = false
+                                        selectedIds = emptySet()
+                                        bulkTagError = null
+                                    } catch (e: Exception) {
+                                        bulkTagError = e.message ?: "Failed to create tag"
+                                    }
+                                }
+                            },
+                            enabled = newTagName.trim().isNotBlank() && selectedIds.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = previewColor,
+                                contentColor = if (previewColor.luminance() > 0.6f) Color.Black else Color.White
+                            )
+                        ) {
+                            Text("Create & add")
+                        }
+                        if (!bulkTagError.isNullOrBlank()) {
+                            Text(bulkTagError ?: "")
                         }
                     }
                 }
@@ -876,31 +986,6 @@ fun DocumentsScreen(
         )
     }
 
-    if (showScanner) {
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showScanner = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            ScannerScreen(
-                onCancel = {
-                    showScanner = false
-                    pendingScanQuality = null
-                },
-                onConfirm = { bitmap, corners ->
-                    val quality = pendingScanQuality ?: ScanQuality.MEDIUM
-                    val warped = warpBitmapWithCorners(bitmap, corners)
-                    viewModel.uploadScannedPdfFromBitmap(warped, context, quality)
-                    showScanner = false
-                    pendingScanQuality = null
-                },
-                onError = { message ->
-                    scanError = message
-                    showScanner = false
-                    pendingScanQuality = null
-                }
-            )
-        }
-    }
 
     if (showDeleteDialog) {
         val doc = deleteTarget
@@ -1054,9 +1139,17 @@ private fun DocumentRow(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     tags.forEach { tag ->
+                        val tagColor = runCatching {
+                            Color(android.graphics.Color.parseColor(tag.color ?: "#2F6BFF"))
+                        }.getOrDefault(MaterialTheme.colorScheme.primary)
+                        val textColor = if (tagColor.luminance() > 0.6f) Color.Black else Color.White
                         AssistChip(
                             onClick = {},
-                            label = { Text(tag.name) }
+                            label = { Text(tag.name, color = textColor) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = tagColor,
+                                labelColor = textColor
+                            )
                         )
                     }
                 }
@@ -1093,6 +1186,7 @@ private fun formatDate(raw: String?): String? {
         }
     }
 }
+
 
 private fun formatInstant(instant: java.time.Instant): String {
     val formatter = java.time.format.DateTimeFormatter.ofLocalizedDateTime(

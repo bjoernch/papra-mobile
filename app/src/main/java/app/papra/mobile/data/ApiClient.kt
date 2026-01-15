@@ -38,6 +38,37 @@ class ApiClient(
         }
     }
 
+    suspend fun createOrganization(apiKey: String, name: String): Organization =
+        withContext(Dispatchers.IO) {
+            val payload = JSONObject().put("name", name)
+            val body = RequestBody.create(
+                "application/json".toMediaTypeOrNull(),
+                payload.toString()
+            )
+            val request = requestBuilder("$baseUrl/organizations", apiKey)
+                .post(body)
+                .build()
+            val json = executeJson(request)
+            json.getJSONObject("organization").let { org ->
+                Organization(
+                    id = org.optString("id"),
+                    name = org.optString("name")
+                )
+            }
+        }
+
+    suspend fun deleteOrganization(apiKey: String, organizationId: String) = withContext(Dispatchers.IO) {
+        val request = requestBuilder("$baseUrl/organizations/$organizationId", apiKey)
+            .delete()
+            .build()
+        okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val payload = response.body?.string().orEmpty()
+                throw IOException("Organization delete failed ${response.code}: $payload")
+            }
+        }
+    }
+
     suspend fun listDocuments(
         apiKey: String,
         organizationId: String,
@@ -200,29 +231,6 @@ class ApiClient(
         description: String?
     ): Tag = withContext(Dispatchers.IO) {
         val url = "$baseUrl/organizations/$organizationId/tags"
-        val formBody = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("name", name)
-            .addFormDataPart("color", color)
-            .apply {
-                if (!description.isNullOrBlank()) {
-                    addFormDataPart("description", description)
-                }
-            }
-            .build()
-        val formRequest = requestBuilder(url, apiKey)
-            .post(formBody)
-            .build()
-        try {
-            val json = executeJson(formRequest)
-            return@withContext json.getJSONObject("tag").toTag()
-        } catch (e: IOException) {
-            val message = e.message.orEmpty()
-            if (!message.contains("invalid_request.body", ignoreCase = true)) {
-                throw e
-            }
-        }
-
         val payload = JSONObject()
             .put("name", name)
             .put("color", color)
@@ -238,8 +246,26 @@ class ApiClient(
         val jsonRequest = requestBuilder(url, apiKey)
             .post(jsonBody)
             .build()
-        val json = executeJson(jsonRequest)
-        json.getJSONObject("tag").toTag()
+        try {
+            val json = executeJson(jsonRequest)
+            return@withContext json.getJSONObject("tag").toTag()
+        } catch (e: IOException) {
+            val formBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("name", name)
+                .addFormDataPart("color", color)
+                .apply {
+                    if (!description.isNullOrBlank()) {
+                        addFormDataPart("description", description)
+                    }
+                }
+                .build()
+            val formRequest = requestBuilder(url, apiKey)
+                .post(formBody)
+                .build()
+            val json = executeJson(formRequest)
+            return@withContext json.getJSONObject("tag").toTag()
+        }
     }
 
     suspend fun updateTag(
@@ -276,6 +302,7 @@ class ApiClient(
             }
         }
     }
+
 
     suspend fun addTagToDocument(
         apiKey: String,

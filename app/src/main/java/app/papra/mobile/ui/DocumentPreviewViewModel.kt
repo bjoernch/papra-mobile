@@ -142,8 +142,31 @@ class DocumentPreviewViewModel(
     fun createTag(name: String, color: String, description: String?) {
         viewModelScope.launch {
             try {
-                apiClient.createTag(apiKey, organizationId, name, color, description)
+                val normalizedColor = if (color.trim().startsWith("#")) {
+                    color.trim()
+                } else {
+                    "#${color.trim()}"
+                }
+                apiClient.createTag(apiKey, organizationId, name, normalizedColor, description)
                 loadTags()
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Failed to create tag"
+            }
+        }
+    }
+
+    fun createAndAddTag(name: String, color: String, description: String?) {
+        viewModelScope.launch {
+            try {
+                val normalizedColor = if (color.trim().startsWith("#")) {
+                    color.trim()
+                } else {
+                    "#${color.trim()}"
+                }
+                val tag = apiClient.createTag(apiKey, organizationId, name, normalizedColor, description)
+                apiClient.addTagToDocument(apiKey, organizationId, documentId, tag.id)
+                loadTags()
+                loadDocument()
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Failed to create tag"
             }
