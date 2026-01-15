@@ -1,4 +1,4 @@
-![Papra Mobile](icon-new.png)
+<img src="icon-new.png" alt="Papra Mobile" width="120" />
 
 # Papra Mobile
 
