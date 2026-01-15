@@ -154,7 +154,10 @@ fun DocumentsScreen(
             val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
             val imageUris = scanResult?.pages?.mapNotNull { it.imageUri }.orEmpty()
             val quality = pendingScanQuality ?: ScanQuality.MEDIUM
-            if (imageUris.isNotEmpty()) {
+            val pdfUri = scanResult?.pdf?.uri
+            if (pdfUri != null) {
+                viewModel.uploadDocument(pdfUri, context.contentResolver)
+            } else if (imageUris.isNotEmpty()) {
                 viewModel.uploadScannedPdfFromImages(
                     imageUris,
                     context.contentResolver,
@@ -162,12 +165,7 @@ fun DocumentsScreen(
                     quality
                 )
             } else {
-                val pdfUri = scanResult?.pdf?.uri
-                if (pdfUri != null) {
-                    viewModel.uploadDocument(pdfUri, context.contentResolver)
-                } else {
-                    scanError = "Scanner did not return a PDF."
-                }
+                scanError = "Scanner did not return a PDF."
             }
             pendingScanQuality = null
         }
