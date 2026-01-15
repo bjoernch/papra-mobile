@@ -1,4 +1,6 @@
-<img src="icon-new.png" alt="Papra Mobile" width="120" />
+<div align="center">
+  <img src="icon-new.png" alt="Papra Mobile" width="120" style="border-radius: 24px;" />
+</div>
 
 # Papra Mobile
 
