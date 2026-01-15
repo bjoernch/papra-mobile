@@ -386,6 +386,42 @@ class DocumentsViewModel(
         }
     }
 
+    fun uploadDocumentFile(file: File, mimeType: String) {
+        viewModelScope.launch {
+            uploadInProgress = true
+            uploadProgress = 0f
+            errorMessage = null
+            try {
+                uploadFileName = file.name
+                val contentLength = file.length().takeIf { it > 0 }
+                    ?: throw IllegalStateException("Empty file")
+                file.inputStream().use { input ->
+                    apiClient.uploadDocument(
+                        apiKey,
+                        organizationId,
+                        file.name,
+                        mimeType,
+                        input,
+                        contentLength
+                    ) { sent, total ->
+                        uploadProgress = if (total != null && total > 0) {
+                            sent.toFloat() / total.toFloat()
+                        } else {
+                            null
+                        }
+                    }
+                }
+                loadDocuments()
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "Upload failed"
+            } finally {
+                uploadInProgress = false
+                uploadFileName = null
+                uploadProgress = null
+            }
+        }
+    }
+
     fun uploadScannedPdfFromImages(
         imageUris: List<Uri>,
         contentResolver: ContentResolver,

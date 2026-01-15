@@ -80,6 +80,7 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlin.math.ln
 import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalMaterialApi::class)
 @Composable
@@ -156,7 +157,36 @@ fun DocumentsScreen(
             val quality = pendingScanQuality ?: ScanQuality.MEDIUM
             val pdfUri = scanResult?.pdf?.uri
             if (pdfUri != null) {
-                viewModel.uploadDocument(pdfUri, context.contentResolver)
+                val tempFile = File(context.cacheDir, "scan-${System.currentTimeMillis()}.pdf")
+                runCatching {
+                    context.contentResolver.openInputStream(pdfUri)?.use { input ->
+                        tempFile.outputStream().use { output -> input.copyTo(output) }
+                    } ?: throw IllegalStateException("Unable to read PDF")
+                }.onSuccess {
+                    if (tempFile.length() > 0) {
+                        viewModel.uploadDocumentFile(tempFile, "application/pdf")
+                    } else if (imageUris.isNotEmpty()) {
+                        viewModel.uploadScannedPdfFromImages(
+                            imageUris,
+                            context.contentResolver,
+                            context,
+                            quality
+                        )
+                    } else {
+                        scanError = "Scanner returned an empty PDF."
+                    }
+                }.onFailure {
+                    if (imageUris.isNotEmpty()) {
+                        viewModel.uploadScannedPdfFromImages(
+                            imageUris,
+                            context.contentResolver,
+                            context,
+                            quality
+                        )
+                    } else {
+                        scanError = "Unable to read scan result."
+                    }
+                }
             } else if (imageUris.isNotEmpty()) {
                 viewModel.uploadScannedPdfFromImages(
                     imageUris,
