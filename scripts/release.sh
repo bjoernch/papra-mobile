@@ -101,18 +101,14 @@ if git rev-parse "$tag" >/dev/null 2>&1; then
 fi
 
 version_title="${tag#v}"
-read -r -p "Release notes (type 'draft since recent update' to auto-generate): " notes_input
 notes_file="release-updates.md"
-
-if [[ "$notes_input" == "draft since recent update" ]]; then
-  if [[ ! -f "$notes_file" ]]; then
-    echo "Missing $notes_file. Create it before releasing." >&2
-    exit 1
-  fi
-else
-  {
-    echo "$notes_input"
-  } > "$notes_file"
+if [[ ! -f "$notes_file" ]]; then
+  echo "Missing $notes_file. Create it before releasing." >&2
+  exit 1
+fi
+if [[ ! -s "$notes_file" ]]; then
+  echo "$notes_file is empty. Add release notes before releasing." >&2
+  exit 1
 fi
 
 echo "Building release APK..."

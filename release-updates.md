@@ -1,9 +1,9 @@
 Papra Mobile — release update
 
 Highlights
-- Scanner upload fix for real devices (avoid empty PDFs, fallback to image-to-PDF)
-- Tag color picker improvements and colored tag buttons
-- Home + navigation refinements
+- Share-to-Papra uploads show clear progress + success state
+- Automatic retry with a safe filename when the server reports “already exists”
+- Improved filename handling for shared files (adds extension if missing)
 
 Notes
 - Requires an API key with: organizations:read, documents:read, documents:create, documents:update, documents:delete, tags:read, tags:create, tags:update, tags:delete

@@ -15,6 +15,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -93,9 +94,33 @@ fun ShareUploadScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    if (viewModel.uploadInProgress) {
+                        item {
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("Uploading...")
+                                    CircularProgressIndicator()
+                                }
+                            }
+                        }
+                    }
+                    if (viewModel.uploadErrorMessage != null) {
+                        item {
+                            Text(
+                                viewModel.uploadErrorMessage ?: "Upload failed",
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                     if (viewModel.successMessage != null) {
                         item {
-                            Text(viewModel.successMessage ?: "Uploaded")
+                            Text(
+                                viewModel.successMessage ?: "Uploaded",
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                     items(viewModel.organizations) { org ->
