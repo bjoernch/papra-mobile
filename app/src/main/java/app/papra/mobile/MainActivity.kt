@@ -191,10 +191,15 @@ private fun MainShell(
     var showAddMenu by remember { mutableStateOf(false) }
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStackEntry?.destination?.route
+    val baseRoute = when {
+        currentRoute == null -> null
+        currentRoute.startsWith("documents") -> "documents"
+        else -> currentRoute.substringBefore("?").substringBefore("/")
+    }
 
     val items = listOf(
         NavItem("home", "Home", Icons.Default.Home),
-        NavItem("documents", "Documents", Icons.Default.Description),
+        NavItem("documents", "Files", Icons.Default.Description),
         NavItem("tags", "Tags", Icons.Default.Label),
         NavItem("settings", "Settings", Icons.Default.Settings)
     )
@@ -202,15 +207,15 @@ private fun MainShell(
 
     Scaffold(
         topBar = {
-            if (currentRoute in items.map { it.route }) {
-                val title = items.firstOrNull { it.route == currentRoute }?.label ?: "Papra"
+            if (baseRoute in items.map { it.route }) {
+                val title = items.firstOrNull { it.route == baseRoute }?.label ?: "Papra"
                 androidx.compose.material3.TopAppBar(
                     title = { Text(title) }
                 )
             }
         },
         bottomBar = {
-            if (currentRoute in items.map { it.route }) {
+            if (baseRoute in items.map { it.route }) {
                 NavigationBar(
                     containerColor = Color(0xFFE9ECFF)
                 ) {
@@ -218,7 +223,7 @@ private fun MainShell(
                     val rightItems = items.drop(2)
                     leftItems.forEach { item ->
                         NavigationBarItem(
-                            selected = currentRoute == item.route,
+                            selected = baseRoute == item.route,
                             onClick = { navController.navigate(item.route) },
                             icon = { Icon(item.icon, contentDescription = item.label) },
                             label = { Text(item.label) }
@@ -270,7 +275,7 @@ private fun MainShell(
                     )
                     rightItems.forEach { item ->
                         NavigationBarItem(
-                            selected = currentRoute == item.route,
+                            selected = baseRoute == item.route,
                             onClick = { navController.navigate(item.route) },
                             icon = { Icon(item.icon, contentDescription = item.label) },
                             label = { Text(item.label) }
