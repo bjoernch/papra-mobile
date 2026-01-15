@@ -91,7 +91,7 @@ class ShareUploadViewModel(
         fileName: String,
         mimeType: String?
     ): String {
-        fun upload(name: String) {
+        suspend fun upload(name: String) {
             contentResolver.openInputStream(uri)?.use { input ->
                 apiClient.uploadDocument(apiKey, organizationId, name, mimeType, input)
             } ?: throw IllegalStateException("Unable to read shared file")
