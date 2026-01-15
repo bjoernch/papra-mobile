@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -158,11 +160,11 @@ fun TagsScreen(
         val tag = activeTag
         var name by remember(tag?.id) { mutableStateOf(tag?.name.orEmpty()) }
         var description by remember(tag?.id) { mutableStateOf(tag?.description.orEmpty()) }
-        val palette = listOf(
-            "#2F6BFF", "#EF6C00", "#26A69A", "#7E57C2", "#E53935"
-        )
-        var selectedColor by remember(tag?.id) { mutableStateOf(tag?.color ?: palette.first()) }
-        val isValidColor = selectedColor.matches(Regex("^#([0-9a-fA-F]{6})$"))
+        val initialColor = parseHexToHsv(tag?.color ?: "#2F6BFF") ?: Triple(215f, 0.7f, 1f)
+        var hue by remember(tag?.id) { mutableStateOf(initialColor.first) }
+        var saturation by remember(tag?.id) { mutableStateOf(initialColor.second) }
+        var value by remember(tag?.id) { mutableStateOf(initialColor.third) }
+        val previewColor = Color.hsv(hue, saturation, value)
         AlertDialog(
             onDismissRequest = { showEditDialog = false },
             title = { Text("Edit tag") },
@@ -180,26 +182,16 @@ fun TagsScreen(
                         label = { Text("Description (optional)") },
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = selectedColor,
-                        onValueChange = { selectedColor = it },
-                        label = { Text("Color (hex)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text("Palette")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        palette.forEach { hex ->
-                            val color = Color(android.graphics.Color.parseColor(hex))
-                            val isSelected = hex == selectedColor
-                            Card(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(color)
-                                    .padding(if (isSelected) 2.dp else 1.dp)
-                                    .clickable { selectedColor = hex }
-                            ) {}
+                    HsvColorPicker(
+                        hue = hue,
+                        saturation = saturation,
+                        value = value,
+                        onColorChange = { newHue, newSat, newVal ->
+                            hue = newHue
+                            saturation = newSat
+                            value = newVal
                         }
-                    }
+                    )
                 }
             },
             confirmButton = {
@@ -207,11 +199,7 @@ fun TagsScreen(
                     onClick = {
                         val orgId = organizationId ?: return@Button
                         val tagId = tag?.id ?: return@Button
-                        val normalizedColor = if (selectedColor.startsWith("#")) {
-                            selectedColor
-                        } else {
-                            "#$selectedColor"
-                        }
+                        val normalizedColor = formatHexColor(previewColor)
                         scope.launch {
                             try {
                                 apiClient.updateTag(
@@ -231,7 +219,11 @@ fun TagsScreen(
                             }
                         }
                     },
-                    enabled = name.isNotBlank() && isValidColor && organizationId != null
+                    enabled = name.isNotBlank() && organizationId != null,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = previewColor,
+                        contentColor = if (previewColor.luminance() > 0.6f) Color.Black else Color.White
+                    )
                 ) {
                     Text("Save")
                 }
@@ -282,11 +274,10 @@ fun TagsScreen(
     if (showCreateDialog) {
         var name by remember { mutableStateOf("") }
         var description by remember { mutableStateOf("") }
-        val palette = listOf(
-            "#2F6BFF", "#EF6C00", "#26A69A", "#7E57C2", "#E53935"
-        )
-        var selectedColor by remember { mutableStateOf(palette.first()) }
-        val isValidColor = selectedColor.matches(Regex("^#([0-9a-fA-F]{6})$"))
+        var hue by remember { mutableStateOf(215f) }
+        var saturation by remember { mutableStateOf(0.7f) }
+        var value by remember { mutableStateOf(1f) }
+        val previewColor = Color.hsv(hue, saturation, value)
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
             title = { Text("Create tag") },
@@ -304,19 +295,17 @@ fun TagsScreen(
                         label = { Text("Description (optional)") },
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Text("Color")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        palette.forEach { hex ->
-                            val color = Color(android.graphics.Color.parseColor(hex))
-                            val isSelected = hex == selectedColor
-                            Card(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(color)
-                                    .padding(if (isSelected) 2.dp else 1.dp)
-                                    .clickable { selectedColor = hex }
-                            ) {}
-                        }
+                    if (name.isNotBlank()) {
+                        HsvColorPicker(
+                            hue = hue,
+                            saturation = saturation,
+                            value = value,
+                            onColorChange = { newHue, newSat, newVal ->
+                                hue = newHue
+                                saturation = newSat
+                                value = newVal
+                            }
+                        )
                     }
                 }
             },
@@ -324,11 +313,7 @@ fun TagsScreen(
                 Button(
                         onClick = {
                         val orgId = organizationId ?: return@Button
-                        val normalizedColor = if (selectedColor.startsWith("#")) {
-                            selectedColor
-                        } else {
-                            "#$selectedColor"
-                        }
+                        val normalizedColor = formatHexColor(previewColor)
                         scope.launch {
                             try {
                                 apiClient.createTag(apiKey, orgId, name, normalizedColor, description.ifBlank { null })
@@ -341,7 +326,11 @@ fun TagsScreen(
                             }
                         }
                     },
-                    enabled = name.isNotBlank() && isValidColor && organizationId != null
+                    enabled = name.isNotBlank() && organizationId != null,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = previewColor,
+                        contentColor = if (previewColor.luminance() > 0.6f) Color.Black else Color.White
+                    )
                 ) {
                     Text("Create")
                 }
